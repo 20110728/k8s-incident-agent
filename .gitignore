@@ -1,0 +1,39 @@
+# Python virtual environments
+.venv/
+venv/
+env/
+.env/
+
+# Environment variable files
+.env
+.env.*
+!.env.example
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Test and lint cache
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Coverage
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+
+# Logs and temporary files
+*.log
+*.tmp

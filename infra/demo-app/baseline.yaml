@@ -16,15 +16,20 @@ data:
         listen 8080;
         server_name _;
 
-        location /healthz {
+        location = /healthz {
             access_log off;
             default_type application/json;
             return 200 '{"status":"ok","service":"order-service"}';
         }
 
-        location / {
+        location = / {
             default_type application/json;
             return 200 '{"message":"order-service is running"}';
+        }
+
+        location / {
+            default_type application/json;
+            return 404 '{"error":"not found"}';
         }
     }
 ---
