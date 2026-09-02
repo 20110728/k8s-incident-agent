@@ -1,0 +1,48 @@
+{'diagnosis': {'confidence': 0.95,
+               'evidence_ids': ['ev-7b4709d4-004',
+                                'ev-7b4709d4-005',
+                                'ev-7b4709d4-006',
+                                'ev-7b4709d4-009'],
+               'fault_category': 'oom_killed',
+               'reasoning_summary': '1. '
+                                    "Pod状态证据(ev-7b4709d4-004)显示容器终止原因为'OOMKilled'，退出码为137，且重启次数为1，表明发生了内存溢出导致的强制终止。\n"
+                                    '2. '
+                                    'Deployment配置证据(ev-7b4709d4-009)显示容器的内存限制(memory '
+                                    "limit)仅为32Mi，且启动命令包含一段awk脚本，该脚本通过不断拼接字符串('data "
+                                    "= data chunk')来无限分配内存，这是导致OOM的直接原因。\n"
+                                    "3. Pod日志证据(ev-7b4709d4-006)记录了'allocating "
+                                    "memory until OOM'，进一步证实了应用行为是故意耗尽内存。\n"
+                                    '4. '
+                                    'Pod事件证据(ev-7b4709d4-005)显示容器经历了Scheduled、Started后进入BackOff状态，符合OOM重启后的行为特征。\n'
+                                    '5. '
+                                    '节点状态证据(ev-7b4709d4-010)显示节点本身没有MemoryPressure，排除了节点级资源不足导致驱逐的可能性，确认问题局限于容器级别的资源限制。',
+               'root_cause': 'Pod容器因内存溢出（OOMKilled）被终止并重启。根本原因是Deployment中配置的容器启动命令执行了无限内存分配脚本，导致容器内存使用量迅速超过设定的32Mi限制，触发Kubernetes '
+                             'OOM Killer机制。',
+               'runbook_ids': ['memory-limit', 'memory-leak']},
+ 'errors': [],
+ 'incident_id': '7b4709d4-3261-476a-8b29-5e343f38f3bf',
+ 'llm_model': 'qwen3.7-plus',
+ 'llm_usage': {'input_tokens': 3864,
+               'output_tokens': 446,
+               'total_tokens': 4310},
+ 'phase': 'diagnosis_completed',
+ 'trace': [{'message': 'request validated',
+            'status': 'completed',
+            'step': 'validate_request',
+            'timestamp': '2026-09-02T13:17:05.721362+00:00'},
+           {'message': 'planned 10 read-only operations',
+            'status': 'completed',
+            'step': 'plan_collection',
+            'timestamp': '2026-09-02T13:17:05.722582+00:00'},
+           {'message': 'collected 10 evidence items; collector errors: 0',
+            'status': 'completed',
+            'step': 'collect_evidence',
+            'timestamp': '2026-09-02T13:17:05.814698+00:00'},
+           {'message': 'retrieved 3 runbook chunks',
+            'status': 'completed',
+            'step': 'retrieve_runbooks',
+            'timestamp': '2026-09-02T13:17:06.045239+00:00'},
+           {'message': 'structured diagnosis completed',
+            'status': 'completed',
+            'step': 'diagnose_incident',
+            'timestamp': '2026-09-02T13:17:14.447609+00:00'}]}

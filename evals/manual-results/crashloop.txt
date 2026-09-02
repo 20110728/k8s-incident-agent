@@ -1,0 +1,44 @@
+{'diagnosis': {'confidence': 0.95,
+               'evidence_ids': ['ev-1dc6060f-004',
+                                'ev-1dc6060f-005',
+                                'ev-1dc6060f-006',
+                                'ev-1dc6060f-009'],
+               'fault_category': 'crash_loop_backoff',
+               'reasoning_summary': "根据证据ev-1dc6060f-009（Deployment），容器配置了特定的command和args，直接执行'echo "
+                                    'fatal: database connection refused >&2; '
+                                    'exit '
+                                    "1'，这解释了容器为何启动即失败。证据ev-1dc6060f-004（PodStatus）显示容器处于terminated状态，退出码为1，重启次数为2，符合CrashLoopBackOff特征。证据ev-1dc6060f-005（PodEvents）记录了BackOff "
+                                    'restarting failed '
+                                    'container事件。证据ev-1dc6060f-006（PodLogs）捕获到了脚本输出的错误日志。综合来看，根因是应用配置导致的进程异常退出。',
+               'root_cause': '应用容器因启动脚本执行失败而反复崩溃。Deployment配置中，容器的command和args被设置为执行shell命令输出错误信息并退出（exit '
+                             '1），导致容器启动后立即以退出码1终止。日志显示“fatal: database '
+                             'connection '
+                             'refused”，表明这是预期的故障模拟或配置错误，导致Pod进入CrashLoopBackOff状态，服务不可用。',
+               'runbook_ids': ['application-exit']},
+ 'errors': [],
+ 'incident_id': '1dc6060f-e49c-4ce3-afe9-dc369aa796dd',
+ 'llm_model': 'qwen3.7-plus',
+ 'llm_usage': {'input_tokens': 3758,
+               'output_tokens': 376,
+               'total_tokens': 4134},
+ 'phase': 'diagnosis_completed',
+ 'trace': [{'message': 'request validated',
+            'status': 'completed',
+            'step': 'validate_request',
+            'timestamp': '2026-09-02T13:12:15.903559+00:00'},
+           {'message': 'planned 10 read-only operations',
+            'status': 'completed',
+            'step': 'plan_collection',
+            'timestamp': '2026-09-02T13:12:15.904502+00:00'},
+           {'message': 'collected 10 evidence items; collector errors: 0',
+            'status': 'completed',
+            'step': 'collect_evidence',
+            'timestamp': '2026-09-02T13:12:15.990415+00:00'},
+           {'message': 'retrieved 3 runbook chunks',
+            'status': 'completed',
+            'step': 'retrieve_runbooks',
+            'timestamp': '2026-09-02T13:12:16.394646+00:00'},
+           {'message': 'structured diagnosis completed',
+            'status': 'completed',
+            'step': 'diagnose_incident',
+            'timestamp': '2026-09-02T13:12:23.545519+00:00'}]}

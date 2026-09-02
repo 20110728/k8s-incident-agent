@@ -1,3 +1,15 @@
+dependencies = [
+    "kubernetes",
+    "pydantic>=2,<3",
+    "langgraph>=1,<2",
+    "langchain>=1,<2",
+    "langchain-openai",
+    "langchain-postgres",
+    "langchain-text-splitters",
+    "psycopg[binary]",
+    "pydantic-settings>=2,<3",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]
 python_files = ["test_*.py"]

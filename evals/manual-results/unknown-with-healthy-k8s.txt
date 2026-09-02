@@ -1,0 +1,52 @@
+{'diagnosis': {'confidence': 0.3,
+               'evidence_ids': ['ev-6b21ea14-001',
+                                'ev-6b21ea14-002',
+                                'ev-6b21ea14-003',
+                                'ev-6b21ea14-004',
+                                'ev-6b21ea14-005',
+                                'ev-6b21ea14-006',
+                                'ev-6b21ea14-007',
+                                'ev-6b21ea14-008',
+                                'ev-6b21ea14-009',
+                                'ev-6b21ea14-010',
+                                'ev-6b21ea14-011'],
+               'fault_category': 'unknown',
+               'reasoning_summary': '分析显示：1. Deployment (ev-6b21ea14-010) '
+                                    '期望副本数与可用副本数均为2，无不可用副本。2. Pod '
+                                    '(ev-6b21ea14-004, ev-6b21ea14-005) '
+                                    '处于Running且Ready状态，重启次数为0。3. Service '
+                                    '(ev-6b21ea14-001) 选择器与Pod标签匹配。4. '
+                                    'EndpointSlice (ev-6b21ea14-003) '
+                                    '包含两个Ready且Serving的端点，表明服务发现正常。5. Node '
+                                    '(ev-6b21ea14-011) 状态Ready且无资源压力。6. Pod事件 '
+                                    '(ev-6b21ea14-006, ev-6b21ea14-007) '
+                                    '均为正常的调度与启动事件。尽管基础设施层面无异常，但用户明确报告无法访问，且缺乏应用日志或HTTP探测失败的具体证据，因此无法定位具体根因，判定为证据不足。',
+               'root_cause': '现有证据不足以确定根因。用户报告服务无法访问，但Kubernetes层面的资源状态（Deployment、Pod、Service、EndpointSlice、Node）均显示正常。缺少应用层日志、HTTP健康检查实际结果或网络连通性测试数据，无法判断是应用内部错误、配置错误还是外部网络问题。',
+               'runbook_ids': []},
+ 'errors': [],
+ 'incident_id': '6b21ea14-059a-4a22-9e71-d1c9c5245203',
+ 'llm_model': 'qwen3.7-plus',
+ 'llm_usage': {'input_tokens': 4345,
+               'output_tokens': 557,
+               'total_tokens': 4902},
+ 'phase': 'diagnosis_completed',
+ 'trace': [{'message': 'request validated',
+            'status': 'completed',
+            'step': 'validate_request',
+            'timestamp': '2026-09-02T13:17:57.509159+00:00'},
+           {'message': 'planned 10 read-only operations',
+            'status': 'completed',
+            'step': 'plan_collection',
+            'timestamp': '2026-09-02T13:17:57.510064+00:00'},
+           {'message': 'collected 11 evidence items; collector errors: 0',
+            'status': 'completed',
+            'step': 'collect_evidence',
+            'timestamp': '2026-09-02T13:17:57.602329+00:00'},
+           {'message': 'retrieved 3 runbook chunks',
+            'status': 'completed',
+            'step': 'retrieve_runbooks',
+            'timestamp': '2026-09-02T13:17:57.840176+00:00'},
+           {'message': 'structured diagnosis completed',
+            'status': 'completed',
+            'step': 'diagnose_incident',
+            'timestamp': '2026-09-02T13:18:08.121898+00:00'}]}
