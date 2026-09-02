@@ -1,0 +1,108 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agent-demo
+  labels:
+    app.kubernetes.io/part-of: k8s-incident-agent
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: order-service-nginx-config
+  namespace: agent-demo
+data:
+  default.conf: |
+    server {
+        listen 8080;
+        server_name _;
+
+        location /healthz {
+            access_log off;
+            default_type application/json;
+            return 200 '{"status":"ok","service":"order-service"}';
+        }
+
+        location / {
+            default_type application/json;
+            return 200 '{"message":"order-service is running"}';
+        }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+  namespace: agent-demo
+  labels:
+    app: order-service
+    app.kubernetes.io/name: order-service
+    app.kubernetes.io/part-of: k8s-incident-agent
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: order-service
+  template:
+    metadata:
+      labels:
+        app: order-service
+        app.kubernetes.io/name: order-service
+    spec:
+      containers:
+        - name: order-service
+          image: nginx:1.30.4-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: nginx-config
+              mountPath: /etc/nginx/conf.d/default.conf
+              subPath: default.conf
+              readOnly: true
+      volumes:
+        - name: nginx-config
+          configMap:
+            name: order-service-nginx-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-service
+  namespace: agent-demo
+  labels:
+    app: order-service
+    app.kubernetes.io/name: order-service
+spec:
+  type: ClusterIP
+  selector:
+    app: order-service
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
