@@ -1,22 +1,35 @@
-from langgraph.graph import END, START, StateGraph
+from langgraph.graph import (
+    END,
+    START,
+    StateGraph,
+)
 
 from backend.app.agent.collector_adapter import (
     EvidenceCollectorPort,
+)
+from backend.app.agent.executor import (
+    RemediationExecutorPort,
 )
 from backend.app.agent.nodes import (
     finish_failure,
     make_collect_evidence_node,
     make_diagnose_incident_node,
+    make_execute_remediation_node,
     make_plan_remediation_node,
     make_retrieve_runbooks_node,
+    make_verify_recovery_node,
     plan_collection,
-    skip_remediation,
-    validate_request,
     prepare_approval,
     request_human_approval,
+    skip_remediation,
+    validate_request,
 )
-
-from backend.app.agent.state import IncidentState
+from backend.app.agent.state import (
+    IncidentState,
+)
+from backend.app.agent.verification import (
+    RecoveryVerifierPort,
+)
 from backend.app.llm.diagnoser import (
     DiagnosisServicePort,
 )
@@ -52,7 +65,9 @@ def route_after_collection(
 def route_after_retrieval(
     state: IncidentState,
 ) -> str:
-    if state.get("phase") == "runbooks_retrieved":
+    if state.get("phase") == (
+        "runbooks_retrieved"
+    ):
         return "diagnose"
 
     return "stop"
@@ -61,7 +76,9 @@ def route_after_retrieval(
 def route_after_diagnosis(
     state: IncidentState,
 ) -> str:
-    if state.get("phase") != "diagnosis_completed":
+    if state.get("phase") != (
+        "diagnosis_completed"
+    ):
         return "stop"
 
     diagnosis = state.get("diagnosis") or {}
@@ -77,10 +94,13 @@ def route_after_diagnosis(
 
     return "plan"
 
+
 def route_after_remediation(
     state: IncidentState,
 ) -> str:
-    if state.get("phase") != "remediation_planned":
+    if state.get("phase") != (
+        "remediation_planned"
+    ):
         return "stop"
 
     if state.get("requires_approval") is True:
@@ -93,29 +113,113 @@ def route_after_prepare_approval(
     state: IncidentState,
 ) -> str:
     if (
-        state.get("phase") == "awaiting_approval"
-        and state.get("approval_status") == "pending"
+        state.get("phase")
+        == "awaiting_approval"
+        and state.get("approval_status")
+        == "pending"
     ):
         return "request"
 
     return "stop"
 
+
+def route_after_approval(
+    state: IncidentState,
+) -> str:
+    if (
+        state.get("phase")
+        == "approval_approved"
+        and state.get("approval_status")
+        == "approved"
+        and state.get("approved") is True
+    ):
+        return "execute"
+
+    return "stop"
+
+
+def route_after_execution(
+    state: IncidentState,
+) -> str:
+    if state.get("phase") != (
+        "remediation_executed"
+    ):
+        return "stop"
+
+    action_result = (
+        state.get("action_result") or {}
+    )
+
+    if hasattr(
+        action_result,
+        "status",
+    ):
+        status = action_result.status
+    else:
+        status = action_result.get(
+            "status"
+        )
+
+    if status in {
+        "succeeded",
+        "already_applied",
+    }:
+        return "verify"
+
+    return "stop"
+
+
 def build_incident_graph(
     collector: EvidenceCollectorPort,
-    retriever: RunbookRetrieverPort | None = None,
-    diagnoser: DiagnosisServicePort | None = None,
-    planner: RemediationPlannerPort | None = None,
+    retriever: (
+        RunbookRetrieverPort | None
+    ) = None,
+    diagnoser: (
+        DiagnosisServicePort | None
+    ) = None,
+    planner: (
+        RemediationPlannerPort | None
+    ) = None,
+    executor: (
+        RemediationExecutorPort | None
+    ) = None,
+    verifier: (
+        RecoveryVerifierPort | None
+    ) = None,
     *,
     checkpointer=None,
 ):
-    if diagnoser is not None and retriever is None:
+    if (
+        diagnoser is not None
+        and retriever is None
+    ):
         raise ValueError(
-            "diagnoser requires a runbook retriever"
+            "diagnoser requires a "
+            "runbook retriever"
         )
 
-    if planner is not None and diagnoser is None:
+    if (
+        planner is not None
+        and diagnoser is None
+    ):
         raise ValueError(
             "planner requires a diagnoser"
+        )
+
+    if (
+        executor is not None
+        and planner is None
+    ):
+        raise ValueError(
+            "executor requires a planner"
+        )
+
+    if (
+        verifier is not None
+        and executor is None
+    ):
+        raise ValueError(
+            "verifier requires an executor"
         )
 
     builder = StateGraph(IncidentState)
@@ -130,7 +234,9 @@ def build_incident_graph(
     )
     builder.add_node(
         "collect_evidence",
-        make_collect_evidence_node(collector),
+        make_collect_evidence_node(
+            collector
+        ),
     )
     builder.add_node(
         "finish_failure",
@@ -172,7 +278,9 @@ def build_incident_graph(
 
     builder.add_node(
         "retrieve_runbooks",
-        make_retrieve_runbooks_node(retriever),
+        make_retrieve_runbooks_node(
+            retriever
+        ),
     )
 
     builder.add_conditional_edges(
@@ -195,7 +303,9 @@ def build_incident_graph(
 
     builder.add_node(
         "diagnose_incident",
-        make_diagnose_incident_node(diagnoser),
+        make_diagnose_incident_node(
+            diagnoser
+        ),
     )
 
     builder.add_conditional_edges(
@@ -218,7 +328,9 @@ def build_incident_graph(
 
     builder.add_node(
         "plan_remediation",
-        make_plan_remediation_node(planner),
+        make_plan_remediation_node(
+            planner
+        ),
     )
     builder.add_node(
         "skip_remediation",
@@ -262,15 +374,65 @@ def build_incident_graph(
         "prepare_approval",
         route_after_prepare_approval,
         {
-            "request": "request_human_approval",
+            "request": (
+                "request_human_approval"
+            ),
             "stop": END,
         },
     )
 
-    # Day 13仅记录审批结果。
-    # Day 14将在批准分支后接入白名单执行节点。
-    builder.add_edge(
+    if executor is None:
+        builder.add_edge(
+            "request_human_approval",
+            END,
+        )
+        return builder.compile(
+            checkpointer=checkpointer,
+        )
+
+    builder.add_node(
+        "execute_remediation",
+        make_execute_remediation_node(
+            executor
+        ),
+    )
+
+    builder.add_conditional_edges(
         "request_human_approval",
+        route_after_approval,
+        {
+            "execute": "execute_remediation",
+            "stop": END,
+        },
+    )
+
+    if verifier is None:
+        builder.add_edge(
+            "execute_remediation",
+            END,
+        )
+        return builder.compile(
+            checkpointer=checkpointer,
+        )
+
+    builder.add_node(
+        "verify_recovery",
+        make_verify_recovery_node(
+            verifier
+        ),
+    )
+
+    builder.add_conditional_edges(
+        "execute_remediation",
+        route_after_execution,
+        {
+            "verify": "verify_recovery",
+            "stop": END,
+        },
+    )
+
+    builder.add_edge(
+        "verify_recovery",
         END,
     )
 

@@ -48,6 +48,17 @@ from backend.app.agent.approval import (
 )
 from backend.app.agent.schemas import ApprovalRequest
 
+from backend.app.agent.execution_policy import (
+    InvalidExecutionAuthorization,
+)
+from backend.app.agent.executor import (
+    RemediationExecutorPort,
+)
+
+from backend.app.agent.verification import (
+    RecoveryVerifierPort,
+)
+
 ALLOWED_NAMESPACE = "agent-demo"
 
 REFERENCE_EDGE_CHARACTERS = " \t\r\n,，;；"
@@ -966,3 +977,293 @@ def request_human_approval(
             )
         ],
     }
+
+def make_execute_remediation_node(
+    executor: RemediationExecutorPort,
+) -> Callable[
+    [IncidentState],
+    dict[str, Any],
+]:
+    def execute_remediation(
+        state: IncidentState,
+    ) -> dict[str, Any]:
+        try:
+            result = executor.execute(state)
+
+        except InvalidExecutionAuthorization as exc:
+            return {
+                "phase": (
+                    "remediation_execution_failed"
+                ),
+                "error_count": (
+                    state.get("error_count", 0)
+                    + 1
+                ),
+                "errors": [
+                    {
+                        "stage": (
+                            "execute_remediation"
+                        ),
+                        "code": (
+                            "INVALID_EXECUTION_AUTHORIZATION"
+                        ),
+                        "message": str(exc),
+                    }
+                ],
+                "trace": [
+                    trace_event(
+                        step=(
+                            "execute_remediation"
+                        ),
+                        status="failed",
+                        message=(
+                            "execution authorization "
+                            "validation failed"
+                        ),
+                    )
+                ],
+            }
+
+        except Exception as exc:
+            return {
+                "phase": (
+                    "remediation_execution_failed"
+                ),
+                "error_count": (
+                    state.get("error_count", 0)
+                    + 1
+                ),
+                "errors": [
+                    {
+                        "stage": (
+                            "execute_remediation"
+                        ),
+                        "code": (
+                            "REMEDIATION_EXECUTION_ERROR"
+                        ),
+                        "message": str(exc),
+                    }
+                ],
+                "trace": [
+                    trace_event(
+                        step=(
+                            "execute_remediation"
+                        ),
+                        status="failed",
+                        message=(
+                            "remediation executor "
+                            "raised an exception"
+                        ),
+                    )
+                ],
+            }
+
+        if result.status in {
+            "succeeded",
+            "already_applied",
+        }:
+            return {
+                "phase": "remediation_executed",
+                "action_result": result,
+                "trace": [
+                    trace_event(
+                        step=(
+                            "execute_remediation"
+                        ),
+                        status="completed",
+                        message=(
+                            "approved remediation "
+                            f"finished with status "
+                            f"{result.status}"
+                        ),
+                    )
+                ],
+            }
+
+        if result.status == "conflict":
+            return {
+                "phase": (
+                    "remediation_execution_conflict"
+                ),
+                "action_result": result,
+                "error_count": (
+                    state.get("error_count", 0)
+                    + 1
+                ),
+                "errors": [
+                    {
+                        "stage": (
+                            "execute_remediation"
+                        ),
+                        "code": (
+                            result.error_code
+                            or "REMEDIATION_CONFLICT"
+                        ),
+                        "message": (
+                            result.error_message
+                            or result.message
+                        ),
+                    }
+                ],
+                "trace": [
+                    trace_event(
+                        step=(
+                            "execute_remediation"
+                        ),
+                        status="failed",
+                        message=(
+                            "approved remediation "
+                            "was blocked by a "
+                            "configuration conflict"
+                        ),
+                    )
+                ],
+            }
+
+        return {
+            "phase": (
+                "remediation_execution_failed"
+            ),
+            "action_result": result,
+            "error_count": (
+                state.get("error_count", 0)
+                + 1
+            ),
+            "errors": [
+                {
+                    "stage": (
+                        "execute_remediation"
+                    ),
+                    "code": (
+                        result.error_code
+                        or "REMEDIATION_EXECUTION_ERROR"
+                    ),
+                    "message": (
+                        result.error_message
+                        or result.message
+                    ),
+                }
+            ],
+            "trace": [
+                trace_event(
+                    step="execute_remediation",
+                    status="failed",
+                    message=(
+                        "approved remediation failed"
+                    ),
+                )
+            ],
+        }
+
+    return execute_remediation
+
+def make_verify_recovery_node(
+    verifier: RecoveryVerifierPort,
+) -> Callable[
+    [IncidentState],
+    dict[str, Any],
+]:
+    def verify_recovery(
+        state: IncidentState,
+    ) -> dict[str, Any]:
+        try:
+            result = verifier.verify(state)
+
+        except Exception as exc:
+            return {
+                "phase": "verification_failed",
+                "error_count": (
+                    state.get("error_count", 0)
+                    + 1
+                ),
+                "errors": [
+                    {
+                        "stage": "verify_recovery",
+                        "code": (
+                            "RECOVERY_VERIFICATION_ERROR"
+                        ),
+                        "message": str(exc),
+                    }
+                ],
+                "trace": [
+                    trace_event(
+                        step="verify_recovery",
+                        status="failed",
+                        message=(
+                            "recovery verifier "
+                            "raised an exception"
+                        ),
+                    )
+                ],
+            }
+
+        if result.status == "succeeded":
+            return {
+                "phase": (
+                    "verification_succeeded"
+                ),
+                "verification_result": result,
+                "trace": [
+                    trace_event(
+                        step="verify_recovery",
+                        status="completed",
+                        message=(
+                            "Kubernetes recovery "
+                            "verification succeeded"
+                        ),
+                    )
+                ],
+            }
+
+        if result.status == "skipped":
+            return {
+                "phase": (
+                    "verification_skipped"
+                ),
+                "verification_result": result,
+                "trace": [
+                    trace_event(
+                        step="verify_recovery",
+                        status="completed",
+                        message=(
+                            "recovery verification "
+                            "was skipped"
+                        ),
+                    )
+                ],
+            }
+
+        return {
+            "phase": "verification_failed",
+            "verification_result": result,
+            "error_count": (
+                state.get("error_count", 0)
+                + 1
+            ),
+            "errors": [
+                {
+                    "stage": "verify_recovery",
+                    "code": (
+                        result.error_code
+                        or "RECOVERY_VERIFICATION_ERROR"
+                    ),
+                    "message": (
+                        result.error_message
+                        or result.message
+                    ),
+                }
+            ],
+            "trace": [
+                trace_event(
+                    step="verify_recovery",
+                    status="failed",
+                    message=(
+                        "Kubernetes recovery "
+                        f"verification finished "
+                        f"with status {result.status}"
+                    ),
+                )
+            ],
+        }
+
+    return verify_recovery

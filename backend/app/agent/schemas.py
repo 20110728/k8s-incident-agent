@@ -238,3 +238,145 @@ class ApprovalRecord(BaseModel):
     approver: str = Field(min_length=1, max_length=100)
     comment: str = Field(default="", max_length=1000)
     decided_at: str = Field(min_length=1)
+
+ExecutionStatus = Literal[
+    "succeeded",
+    "already_applied",
+    "conflict",
+    "failed",
+]
+
+
+class ResourceSnapshot(BaseModel):
+    """Minimal non-secret configuration snapshot."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    namespace: str = Field(
+        min_length=1,
+        max_length=63,
+        pattern=KUBERNETES_NAME_PATTERN,
+    )
+    resource_kind: Literal[
+        "Service",
+        "Deployment",
+    ]
+    resource_name: str = Field(
+        min_length=1,
+        max_length=253,
+    )
+    resource_version: str = Field(
+        min_length=1,
+    )
+    configuration: dict[str, Any]
+
+
+class ActionExecutionResult(BaseModel):
+    """Final result of one approved write operation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    execution_id: str = Field(
+        pattern=r"^exec-[0-9a-f]{16}$",
+    )
+    approval_id: str = Field(
+        pattern=r"^apr-[0-9a-f]{16}$",
+    )
+    action: RemediationActionName
+    status: ExecutionStatus
+
+    namespace: str = Field(
+        min_length=1,
+        max_length=63,
+        pattern=KUBERNETES_NAME_PATTERN,
+    )
+    resource_kind: Literal[
+        "Service",
+        "Deployment",
+    ]
+    resource_name: str = Field(
+        min_length=1,
+        max_length=253,
+    )
+
+    started_at: str = Field(min_length=1)
+    finished_at: str = Field(min_length=1)
+
+    before_snapshot: ResourceSnapshot | None = None
+    after_snapshot: ResourceSnapshot | None = None
+
+    applied_patch: dict[str, Any] = Field(
+        default_factory=dict,
+    )
+    rollback_patch: dict[str, Any] = Field(
+        default_factory=dict,
+    )
+
+    message: str = Field(min_length=1)
+    error_code: str | None = None
+    error_message: str | None = None
+
+class ResourceMutationResult(BaseModel):
+    """Result returned by one Kubernetes patch tool."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: ExecutionStatus
+
+    before_snapshot: ResourceSnapshot | None = None
+    after_snapshot: ResourceSnapshot | None = None
+
+    applied_patch: dict[str, Any] = Field(
+        default_factory=dict,
+    )
+    rollback_patch: dict[str, Any] = Field(
+        default_factory=dict,
+    )
+
+    message: str = Field(min_length=1)
+    error_code: str | None = None
+    error_message: str | None = None
+
+VerificationStatus = Literal[
+    "succeeded",
+    "failed",
+    "timeout",
+    "skipped",
+]
+
+
+class VerificationCheck(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1)
+    passed: bool
+    observed: Any
+    expected: Any
+    message: str = Field(min_length=1)
+
+
+class RecoveryVerificationResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    execution_id: str = Field(
+        pattern=r"^exec-[0-9a-f]{16}$",
+    )
+    action: RemediationActionName
+    status: VerificationStatus
+
+    started_at: str = Field(min_length=1)
+    finished_at: str = Field(min_length=1)
+    attempts: int = Field(ge=0)
+
+    checks: list[VerificationCheck] = Field(
+        default_factory=list,
+    )
+
+    desired_replicas: int | None = None
+    available_replicas: int | None = None
+    ready_pods: int | None = None
+    ready_endpoints: int | None = None
+
+    message: str = Field(min_length=1)
+    error_code: str | None = None
+    error_message: str | None = None

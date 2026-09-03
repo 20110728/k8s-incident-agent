@@ -1,9 +1,12 @@
 from typing import Any
 
 from backend.app.agent.schemas import (
+    ActionExecutionResult,
     Diagnosis,
     RemediationPlan,
+    RecoveryVerificationResult,
 )
+
 from backend.app.llm.diagnoser import (
     DiagnosisCallResult,
 )
@@ -123,3 +126,61 @@ class FakeRemediationPlanner:
                 "total_tokens": 160,
             },
         )
+
+class FakeRemediationExecutor:
+    def __init__(
+        self,
+        result: (
+            ActionExecutionResult | None
+        ) = None,
+        error: Exception | None = None,
+    ) -> None:
+        self.result = result
+        self.error = error
+        self.calls: list[dict] = []
+
+    def execute(
+        self,
+        state: dict,
+    ) -> ActionExecutionResult:
+        self.calls.append(state)
+
+        if self.error is not None:
+            raise self.error
+
+        if self.result is None:
+            raise ValueError(
+                "fake execution result "
+                "was not configured"
+            )
+
+        return self.result
+
+class FakeRecoveryVerifier:
+    def __init__(
+        self,
+        result: (
+            RecoveryVerificationResult | None
+        ) = None,
+        error: Exception | None = None,
+    ) -> None:
+        self.result = result
+        self.error = error
+        self.calls: list[dict] = []
+
+    def verify(
+        self,
+        state: dict,
+    ) -> RecoveryVerificationResult:
+        self.calls.append(state)
+
+        if self.error is not None:
+            raise self.error
+
+        if self.result is None:
+            raise ValueError(
+                "fake verification result "
+                "was not configured"
+            )
+
+        return self.result

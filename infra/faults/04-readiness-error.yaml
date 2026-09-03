@@ -5,8 +5,12 @@ metadata:
   namespace: agent-demo
   labels:
     app: order-service
+    app.kubernetes.io/name: order-service
+    app.kubernetes.io/part-of: k8s-incident-agent
 spec:
-  replicas: 1
+  replicas: 2
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: order-service
@@ -14,6 +18,7 @@ spec:
     metadata:
       labels:
         app: order-service
+        app.kubernetes.io/name: order-service
     spec:
       containers:
         - name: order-service
@@ -22,6 +27,7 @@ spec:
           ports:
             - name: http
               containerPort: 8080
+              protocol: TCP
           readinessProbe:
             httpGet:
               path: /wrong-health
@@ -30,6 +36,14 @@ spec:
             periodSeconds: 3
             timeoutSeconds: 2
             failureThreshold: 2
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
           resources:
             requests:
               cpu: 20m

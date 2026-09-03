@@ -25,6 +25,13 @@ from backend.app.llm.remediation_planner import (
     ChatRemediationPlanner,
 )
 
+from backend.app.agent.executor import (
+    KubernetesRemediationExecutor,
+)
+from backend.app.agent.verification import (
+    KubernetesRecoveryVerifier,
+)
+
 def build_kubernetes_collector() -> KubernetesCollectorAdapter:
     clients = create_clients()
 
@@ -68,4 +75,19 @@ def build_remediation_planner() -> (
     return ChatRemediationPlanner(
         model=model,
         model_name=settings.llm_model,
+    )
+
+def build_remediation_executor() -> (
+    KubernetesRemediationExecutor
+):
+    return KubernetesRemediationExecutor(
+        clients=create_clients(),
+    )
+
+
+def build_recovery_verifier() -> (
+    KubernetesRecoveryVerifier
+):
+    return KubernetesRecoveryVerifier(
+        clients=create_clients(),
     )

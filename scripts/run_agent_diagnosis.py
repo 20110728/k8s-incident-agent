@@ -5,12 +5,16 @@ from pprint import pprint
 from typing import Any
 from uuid import uuid4
 
-from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.memory import (
+    InMemorySaver,
+)
 from langgraph.types import Command
 
 from backend.app.agent.dependencies import (
     build_diagnosis_service,
     build_kubernetes_collector,
+    build_recovery_verifier,
+    build_remediation_executor,
     build_remediation_planner,
     build_runbook_retriever,
 )
@@ -49,7 +53,10 @@ def read_approver(
     configured_approver: str | None,
 ) -> str:
     if configured_approver:
-        normalized = configured_approver.strip()
+        normalized = (
+            configured_approver.strip()
+        )
+
         if normalized:
             return normalized
 
@@ -99,6 +106,12 @@ def print_result(
             "approved": result.get(
                 "approved"
             ),
+            "action_result": model_to_dict(
+                result.get("action_result")
+            ),
+            "verification_result": model_to_dict(
+                result.get("verification_result")
+            ),
             "diagnosis_llm_model": result.get(
                 "diagnosis_llm_model"
             ),
@@ -126,8 +139,9 @@ def print_result(
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Run Kubernetes incident diagnosis "
-            "and human approval workflow."
+            "Run Kubernetes incident diagnosis, "
+            "human approval, allowlisted remediation "
+            "and recovery verification workflow."
         )
     )
     parser.add_argument(
@@ -185,6 +199,8 @@ def main() -> None:
         retriever=build_runbook_retriever(),
         diagnoser=build_diagnosis_service(),
         planner=build_remediation_planner(),
+        executor=build_remediation_executor(),
+        verifier=build_recovery_verifier(),
         checkpointer=InMemorySaver(),
     )
 
@@ -211,12 +227,16 @@ def main() -> None:
     )
 
     if interrupts:
-        interrupt_value = interrupts[0].value
+        interrupt_value = (
+            interrupts[0].value
+        )
         approval_request = interrupt_value[
             "approval_request"
         ]
 
-        print("\n工作流已暂停，等待人工审批：")
+        print(
+            "\n工作流已暂停，等待人工审批："
+        )
         pprint(interrupt_value)
 
         choice = read_approval_choice(
@@ -229,9 +249,11 @@ def main() -> None:
         result = graph.invoke(
             Command(
                 resume={
-                    "approval_id": approval_request[
-                        "approval_id"
-                    ],
+                    "approval_id": (
+                        approval_request[
+                            "approval_id"
+                        ]
+                    ),
                     "approved": (
                         choice == "approve"
                     ),
