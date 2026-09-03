@@ -27,6 +27,27 @@ from backend.app.llm.diagnoser import (
     DiagnosisServicePort,
 )
 
+from backend.app.agent.remediation_policy import (
+    InvalidRemediationPlan,
+    validate_remediation_plan,
+)
+
+from backend.app.llm.remediation_planner import (
+    RemediationPlannerPort,
+)
+
+from langgraph.types import interrupt
+
+from backend.app.agent.approval import (
+    InvalidApprovalDecision,
+    InvalidApprovalRequest,
+    build_approval_request,
+    create_approval_record,
+    load_existing_approval_record,
+    validate_approval_decision,
+)
+from backend.app.agent.schemas import ApprovalRequest
+
 ALLOWED_NAMESPACE = "agent-demo"
 
 REFERENCE_EDGE_CHARACTERS = " \t\r\n,，;；"
@@ -449,47 +470,111 @@ def make_diagnose_incident_node(
     def diagnose_incident(
         state: IncidentState,
     ) -> dict[str, Any]:
+        accumulated_usage: dict[str, int] = {}
+        retry_count = 0
+
         try:
-            result = diagnoser.diagnose(state)
+            validation_feedback: str | None = None
 
-            diagnosis_normalized = result.diagnosis.model_copy(
-                update={
-                    "evidence_ids": _normalize_reference_ids(
-                        result.diagnosis.evidence_ids
-                    ),
-                    "runbook_ids": _normalize_reference_ids(
-                        result.diagnosis.runbook_ids
-                    ),
-                }
-            )
+            # 首次调用加一次校验重试，
+            # 最多进行两次LLM诊断。
+            for attempt_index in range(2):
+                call_state = dict(state)
 
-            validate_diagnosis_references(
-                diagnosis=diagnosis_normalized,
-                state=state,
-            )
+                if validation_feedback is not None:
+                    call_state[
+                        "diagnosis_validation_feedback"
+                    ] = validation_feedback
+                    retry_count = 1
 
-            return {
-                "phase": "diagnosis_completed",
-                "diagnosis": (
-                    diagnosis_normalized.model_dump()
-                ),
-                "llm_model": result.model_name,
-                "llm_usage": result.usage,
-                "trace": [
-                    trace_event(
-                        "diagnose_incident",
-                        "completed",
-                        (
-                            "structured diagnosis "
-                            "completed"
-                        ),
+                result = diagnoser.diagnose(
+                    call_state
+                )
+
+                for key, value in (
+                    result.usage.items()
+                ):
+                    if not isinstance(value, int):
+                        continue
+
+                    accumulated_usage[key] = (
+                        accumulated_usage.get(
+                            key,
+                            0,
+                        )
+                        + value
                     )
-                ],
-            }
+
+                try:
+                    diagnosis_normalized = (
+                        result.diagnosis.model_copy(
+                            update={
+                                "evidence_ids": (
+                                    _normalize_reference_ids(
+                                        result.diagnosis.evidence_ids
+                                    )
+                                ),
+                                "runbook_ids": (
+                                    _normalize_reference_ids(
+                                        result.diagnosis.runbook_ids
+                                    )
+                                ),
+                            }
+                        )
+                    )
+
+                    validate_diagnosis_references(
+                        diagnosis=diagnosis_normalized,
+                        state=state,
+                    )
+
+                except InvalidDiagnosisReference as exc:
+                    if attempt_index == 0:
+                        validation_feedback = str(exc)
+                        continue
+
+                    raise
+
+                trace_message = (
+                    "structured diagnosis completed"
+                )
+
+                if retry_count:
+                    trace_message = (
+                        "structured diagnosis completed "
+                        "after one validation retry"
+                    )
+
+                return {
+                    "phase": "diagnosis_completed",
+                    "diagnosis": (
+                        diagnosis_normalized.model_dump()
+                    ),
+                    "llm_model": result.model_name,
+                    "llm_usage": accumulated_usage,
+                    "diagnosis_retry_count": (
+                        retry_count
+                    ),
+                    "trace": [
+                        trace_event(
+                            "diagnose_incident",
+                            "completed",
+                            trace_message,
+                        )
+                    ],
+                }
+
+            raise RuntimeError(
+                "diagnosis retry loop ended "
+                "without a result"
+            )
 
         except InvalidDiagnosisReference as exc:
             return {
                 "phase": "diagnosis_failed",
+                "diagnosis_retry_count": (
+                    retry_count
+                ),
                 "error_count": (
                     state.get("error_count", 0) + 1
                 ),
@@ -506,7 +591,10 @@ def make_diagnose_incident_node(
                     trace_event(
                         "diagnose_incident",
                         "failed",
-                        "diagnosis reference validation failed",
+                        (
+                            "diagnosis reference "
+                            "validation failed"
+                        ),
                     )
                 ],
             }
@@ -514,13 +602,18 @@ def make_diagnose_incident_node(
         except Exception as exc:
             return {
                 "phase": "diagnosis_failed",
+                "diagnosis_retry_count": (
+                    retry_count
+                ),
                 "error_count": (
                     state.get("error_count", 0) + 1
                 ),
                 "errors": [
                     {
                         "stage": "diagnose_incident",
-                        "code": "LLM_DIAGNOSIS_ERROR",
+                        "code": (
+                            "LLM_DIAGNOSIS_ERROR"
+                        ),
                         "message": str(exc),
                     }
                 ],
@@ -534,3 +627,342 @@ def make_diagnose_incident_node(
             }
 
     return diagnose_incident
+
+def skip_remediation(
+    state: IncidentState,
+) -> dict[str, Any]:
+    diagnosis = state.get("diagnosis") or {}
+    fault_category = diagnosis.get(
+        "fault_category",
+        "unknown",
+    )
+
+    return {
+        "phase": "remediation_skipped",
+        "remediation_plan": None,
+        "risk_level": None,
+        "requires_approval": False,
+        "approved": None,
+        "trace": [
+            trace_event(
+                "skip_remediation",
+                "completed",
+                (
+                    "remediation skipped for "
+                    f"fault category {fault_category}"
+                ),
+            )
+        ],
+    }
+
+
+def make_plan_remediation_node(
+    planner: RemediationPlannerPort,
+) -> Callable[[IncidentState], dict[str, Any]]:
+    def plan_remediation(
+        state: IncidentState,
+    ) -> dict[str, Any]:
+        try:
+            result = planner.plan(state)
+
+            validated_plan = (
+                validate_remediation_plan(
+                    plan=result.plan,
+                    state=state,
+                )
+            )
+
+            return {
+                "phase": "remediation_planned",
+                "remediation_plan": (
+                    validated_plan.model_dump()
+                ),
+                "risk_level": (
+                    validated_plan.risk_level
+                ),
+                "requires_approval": (
+                    validated_plan.requires_approval
+                ),
+                "approved": None,
+                "remediation_llm_model": (
+                    result.model_name
+                ),
+                "remediation_llm_usage": (
+                    result.usage
+                ),
+                "trace": [
+                    trace_event(
+                        "plan_remediation",
+                        "completed",
+                        (
+                            "structured remediation "
+                            "plan completed"
+                        ),
+                    )
+                ],
+            }
+
+        except InvalidRemediationPlan as exc:
+            return {
+                "phase": "remediation_failed",
+                "error_count": (
+                    state.get("error_count", 0) + 1
+                ),
+                "errors": [
+                    {
+                        "stage": "plan_remediation",
+                        "code": (
+                            "INVALID_REMEDIATION_PLAN"
+                        ),
+                        "message": str(exc),
+                    }
+                ],
+                "trace": [
+                    trace_event(
+                        "plan_remediation",
+                        "failed",
+                        (
+                            "remediation plan "
+                            "validation failed"
+                        ),
+                    )
+                ],
+            }
+
+        except Exception as exc:
+            return {
+                "phase": "remediation_failed",
+                "error_count": (
+                    state.get("error_count", 0) + 1
+                ),
+                "errors": [
+                    {
+                        "stage": "plan_remediation",
+                        "code": (
+                            "LLM_REMEDIATION_ERROR"
+                        ),
+                        "message": str(exc),
+                    }
+                ],
+                "trace": [
+                    trace_event(
+                        "plan_remediation",
+                        "failed",
+                        (
+                            "LLM remediation "
+                            "planning failed"
+                        ),
+                    )
+                ],
+            }
+
+    return plan_remediation
+
+def prepare_approval(state: IncidentState) -> dict[str, Any]:
+    """Create and persist the deterministic approval request."""
+
+    if state.get("requires_approval") is not True:
+        return {
+            "phase": "remediation_planned",
+            "approval_status": "not_required",
+            "approved": None,
+            "trace": [
+                trace_event(
+                    step="prepare_approval",
+                    status="completed",
+                    message="remediation plan does not require approval",
+                )
+            ],
+        }
+
+    try:
+        existing_record = load_existing_approval_record(state)
+        if existing_record is not None:
+            status = (
+                "approved"
+                if existing_record.approved
+                else "rejected"
+            )
+            return {
+                "phase": f"approval_{status}",
+                "approval_status": status,
+                "approved": existing_record.approved,
+                "trace": [
+                    trace_event(
+                        step="prepare_approval",
+                        status="completed",
+                        message="existing approval record preserved",
+                    )
+                ],
+            }
+
+        approval_request = build_approval_request(state)
+    except (InvalidApprovalRequest, InvalidApprovalDecision) as exc:
+        return {
+            "phase": "approval_failed",
+            "approval_status": "failed",
+            "approved": None,
+            "errors": [
+                {
+                    "stage": "prepare_approval",
+                    "code": "INVALID_APPROVAL_REQUEST",
+                    "message": str(exc),
+                }
+            ],
+            "trace": [
+                trace_event(
+                    step="prepare_approval",
+                    status="failed",
+                    message="approval request validation failed",
+                )
+            ],
+        }
+
+    return {
+        "phase": "awaiting_approval",
+        "approval_status": "pending",
+        "approval_request": approval_request,
+        "approved": None,
+        "trace": [
+            trace_event(
+                step="prepare_approval",
+                status="completed",
+                message="approval request prepared",
+            )
+        ],
+    }
+
+
+def request_human_approval(
+    state: IncidentState,
+) -> dict[str, Any]:
+    """Pause the graph and record one human approval decision."""
+
+    try:
+        existing_record = load_existing_approval_record(state)
+    except InvalidApprovalDecision as exc:
+        return {
+            "phase": "approval_failed",
+            "approval_status": "failed",
+            "errors": [
+                {
+                    "stage": "request_human_approval",
+                    "code": "INVALID_APPROVAL_RECORD",
+                    "message": str(exc),
+                }
+            ],
+            "trace": [
+                trace_event(
+                    step="request_human_approval",
+                    status="failed",
+                    message="existing approval record is invalid",
+                )
+            ],
+        }
+
+    if existing_record is not None:
+        status = (
+            "approved"
+            if existing_record.approved
+            else "rejected"
+        )
+        return {
+            "phase": f"approval_{status}",
+            "approval_status": status,
+            "approved": existing_record.approved,
+            "trace": [
+                trace_event(
+                    step="request_human_approval",
+                    status="completed",
+                    message="duplicate approval request ignored",
+                )
+            ],
+        }
+
+    try:
+        expected_request = build_approval_request(state)
+        stored_request = ApprovalRequest.model_validate(
+            state.get("approval_request")
+        )
+
+        if stored_request != expected_request:
+            raise InvalidApprovalRequest(
+                "stored approval request does not match remediation plan"
+            )
+    except Exception as exc:
+        return {
+            "phase": "approval_failed",
+            "approval_status": "failed",
+            "approved": None,
+            "errors": [
+                {
+                    "stage": "request_human_approval",
+                    "code": "INVALID_APPROVAL_REQUEST",
+                    "message": str(exc),
+                }
+            ],
+            "trace": [
+                trace_event(
+                    step="request_human_approval",
+                    status="failed",
+                    message="approval request validation failed",
+                )
+            ],
+        }
+
+    resume_value = interrupt(
+        {
+            "type": "remediation_approval_required",
+            "message": "该处置方案需要人工审批。",
+            "approval_request": expected_request.model_dump(
+                mode="json"
+            ),
+        }
+    )
+
+    try:
+        decision = validate_approval_decision(
+            resume_value,
+            expected_request,
+        )
+    except InvalidApprovalDecision as exc:
+        return {
+            "phase": "approval_failed",
+            "approval_status": "failed",
+            "approved": None,
+            "errors": [
+                {
+                    "stage": "request_human_approval",
+                    "code": "INVALID_APPROVAL_DECISION",
+                    "message": str(exc),
+                }
+            ],
+            "trace": [
+                trace_event(
+                    step="request_human_approval",
+                    status="failed",
+                    message="approval decision validation failed",
+                )
+            ],
+        }
+
+    record = create_approval_record(
+        expected_request,
+        decision,
+    )
+    status = "approved" if decision.approved else "rejected"
+
+    return {
+        "phase": f"approval_{status}",
+        "approval_status": status,
+        "approval_request": expected_request,
+        "approval_record": record,
+        "approved": decision.approved,
+        "trace": [
+            trace_event(
+                step="request_human_approval",
+                status="completed",
+                message=f"remediation plan {status} by human",
+            )
+        ],
+    }

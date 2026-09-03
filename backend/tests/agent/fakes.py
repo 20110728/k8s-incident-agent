@@ -1,8 +1,14 @@
 from typing import Any
 
-from backend.app.agent.schemas import Diagnosis
+from backend.app.agent.schemas import (
+    Diagnosis,
+    RemediationPlan,
+)
 from backend.app.llm.diagnoser import (
     DiagnosisCallResult,
+)
+from backend.app.llm.remediation_planner import (
+    RemediationCallResult,
 )
 
 class FakeCollector:
@@ -80,5 +86,40 @@ class FakeDiagnoser:
                 "input_tokens": 100,
                 "output_tokens": 30,
                 "total_tokens": 130,
+            },
+        )
+
+class FakeRemediationPlanner:
+    def __init__(
+        self,
+        plan: RemediationPlan | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self.result_plan = plan
+        self.error = error
+        self.calls: list[dict] = []
+
+    def plan(
+        self,
+        state: dict,
+    ) -> RemediationCallResult:
+        self.calls.append(state)
+
+        if self.error is not None:
+            raise self.error
+
+        if self.result_plan is None:
+            raise ValueError(
+                "fake remediation plan "
+                "was not configured"
+            )
+
+        return RemediationCallResult(
+            plan=self.result_plan,
+            model_name="fake-remediation-model",
+            usage={
+                "input_tokens": 120,
+                "output_tokens": 40,
+                "total_tokens": 160,
             },
         )

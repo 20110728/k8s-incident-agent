@@ -1,13 +1,20 @@
 import pytest
 
 from backend.app.agent.graph import build_incident_graph
-from backend.app.agent.schemas import Diagnosis
+from backend.app.agent.schemas import (
+    Diagnosis,
+    RemediationParameters,
+    RemediationPlan,
+)
 from backend.app.llm.diagnoser import DiagnosisCallResult
 from backend.tests.agent.fakes import (
     FakeCollector,
     FakeRetriever,
+    FakeRemediationPlanner,
 )
-
+from backend.app.llm.remediation_planner import (
+    RemediationCallResult,
+)
 
 def healthy_bundle() -> dict:
     return {
@@ -103,6 +110,111 @@ class StateAwareDiagnoser:
             },
         )
 
+class StateAwareRemediationPlanner:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def plan(
+        self,
+        state: dict,
+    ) -> RemediationCallResult:
+        self.calls.append(state)
+
+        evidence_id = state["diagnosis"][
+            "evidence_ids"
+        ][0]
+        runbook_id = state["diagnosis"][
+            "runbook_ids"
+        ][0]
+
+        return RemediationCallResult(
+            plan=RemediationPlan(
+                action="manual_investigation",
+                parameters=(
+                    RemediationParameters(
+                        namespace="agent-demo",
+                        resource_kind="Service",
+                        resource_name="order-service",
+                        container_name=None,
+                        current_probe_path=None,
+                        proposed_probe_path=None,
+                        current_probe_port=None,
+                        proposed_probe_port=None,
+                        current_selector=[],
+                        proposed_selector=[],
+                        investigation_steps=[
+                            (
+                                "检查应用实际健康检查"
+                                "端点配置。"
+                            )
+                        ],
+                    )
+                ),
+                risk_level="low",
+                summary=(
+                    "继续人工确认探针目标。"
+                ),
+                expected_result=(
+                    "获得正确健康检查端点证据。"
+                ),
+                rollback_plan=(
+                    "未执行自动修改，无需回滚。"
+                ),
+                evidence_ids=[evidence_id],
+                runbook_ids=[runbook_id],
+                requires_approval=False,
+            ),
+            model_name="fake-remediation-model",
+            usage={
+                "input_tokens": 120,
+                "output_tokens": 40,
+                "total_tokens": 160,
+            },
+        )
+
+
+class SkippingDiagnoser:
+    def __init__(
+        self,
+        fault_category: str,
+    ) -> None:
+        self.fault_category = fault_category
+
+    def diagnose(
+        self,
+        state: dict,
+    ) -> DiagnosisCallResult:
+        evidence_id = state["evidence"][0][
+            "evidence_id"
+        ]
+
+        if self.fault_category == (
+            "no_fault_detected"
+        ):
+            root_cause = (
+                "现有证据未检测到故障。"
+            )
+        else:
+            root_cause = (
+                "现有证据不足以确定根因。"
+            )
+
+        return DiagnosisCallResult(
+            diagnosis=Diagnosis(
+                fault_category=(
+                    self.fault_category
+                ),
+                root_cause=root_cause,
+                evidence_ids=[evidence_id],
+                runbook_ids=[],
+                confidence=0.3,
+                reasoning_summary=(
+                    "现有Kubernetes证据不足。"
+                ),
+            ),
+            model_name="fake-model",
+            usage={},
+        )
 
 def invoke_graph(graph):
     return graph.invoke(
@@ -205,3 +317,129 @@ def test_retrieval_error_stops_before_diagnosis():
         "RETRIEVAL_ERROR"
     )
     assert diagnoser.calls == []
+
+def test_empty_retrieval_stops_before_diagnosis():
+    diagnoser = StateAwareDiagnoser()
+
+    graph = build_incident_graph(
+        collector=FakeCollector(
+            result=healthy_bundle()
+        ),
+        retriever=FakeRetriever(result=[]),
+        diagnoser=diagnoser,
+    )
+
+    result = invoke_graph(graph)
+
+    assert result["phase"] == (
+        "runbook_retrieval_failed"
+    )
+    assert result["errors"][-1]["code"] == (
+        "NO_RUNBOOK_FOUND"
+    )
+    assert diagnoser.calls == []
+
+def test_full_graph_completes_remediation_plan():
+    planner = StateAwareRemediationPlanner()
+
+    graph = build_incident_graph(
+        collector=FakeCollector(
+            result=healthy_bundle()
+        ),
+        retriever=FakeRetriever(
+            result=runbook_result()
+        ),
+        diagnoser=StateAwareDiagnoser(),
+        planner=planner,
+    )
+
+    result = invoke_graph(graph)
+
+    assert result["phase"] == (
+        "remediation_planned"
+    )
+    assert result["remediation_plan"][
+        "action"
+    ] == "manual_investigation"
+    assert result["risk_level"] == "low"
+    assert result["requires_approval"] is False
+    assert len(planner.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "fault_category",
+    [
+        "unknown",
+        "no_fault_detected",
+    ],
+)
+def test_non_actionable_diagnosis_skips_planner(
+    fault_category,
+):
+    planner = FakeRemediationPlanner()
+
+    graph = build_incident_graph(
+        collector=FakeCollector(
+            result=healthy_bundle()
+        ),
+        retriever=FakeRetriever(
+            result=runbook_result()
+        ),
+        diagnoser=SkippingDiagnoser(
+            fault_category
+        ),
+        planner=planner,
+    )
+
+    result = invoke_graph(graph)
+
+    assert result["phase"] == (
+        "remediation_skipped"
+    )
+    assert result["remediation_plan"] is None
+    assert result["requires_approval"] is False
+    assert planner.calls == []
+
+
+def test_planner_without_diagnoser_is_rejected():
+    with pytest.raises(
+        ValueError,
+        match="planner requires a diagnoser",
+    ):
+        build_incident_graph(
+            collector=FakeCollector(
+                result=healthy_bundle()
+            ),
+            retriever=FakeRetriever(
+                result=runbook_result()
+            ),
+            planner=FakeRemediationPlanner(),
+        )
+
+
+def test_planner_error_is_written_to_graph_state():
+    planner = FakeRemediationPlanner(
+        error=TimeoutError(
+            "remediation model timed out"
+        )
+    )
+
+    graph = build_incident_graph(
+        collector=FakeCollector(
+            result=healthy_bundle()
+        ),
+        retriever=FakeRetriever(
+            result=runbook_result()
+        ),
+        diagnoser=StateAwareDiagnoser(),
+        planner=planner,
+    )
+
+    result = invoke_graph(graph)
+
+    assert result["phase"] == (
+        "remediation_failed"
+    )
+    assert result["errors"][-1]["code"] == (
+        "LLM_REMEDIATION_ERROR"
+    )    

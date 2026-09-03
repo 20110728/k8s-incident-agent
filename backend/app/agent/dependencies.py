@@ -21,6 +21,10 @@ from backend.app.llm.diagnoser import (
     ChatDiagnosisService,
 )
 
+from backend.app.llm.remediation_planner import (
+    ChatRemediationPlanner,
+)
+
 def build_kubernetes_collector() -> KubernetesCollectorAdapter:
     clients = create_clients()
 
@@ -51,6 +55,17 @@ def build_diagnosis_service() -> (
     model = build_chat_model(settings)
 
     return ChatDiagnosisService(
+        model=model,
+        model_name=settings.llm_model,
+    )
+
+def build_remediation_planner() -> (
+    ChatRemediationPlanner
+):
+    settings = get_rag_settings()
+    model = build_chat_model(settings)
+
+    return ChatRemediationPlanner(
         model=model,
         model_name=settings.llm_model,
     )

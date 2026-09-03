@@ -47,12 +47,17 @@ def serialize_limited(
     return text[:limit] + "...[truncated]"
 
 
+
 def build_diagnosis_context(
     state: IncidentState,
 ) -> str:
     request = state.get("request", {})
     evidence = state.get("evidence", [])
     runbooks = state.get("retrieved_runbooks", [])
+
+    validation_feedback = state.get(
+        "diagnosis_validation_feedback"
+    )
 
     evidence_blocks: list[dict[str, Any]] = []
 
@@ -124,6 +129,13 @@ def build_diagnosis_context(
         "evidence": evidence_blocks,
         "runbooks": runbook_blocks,
     }
+
+    if validation_feedback:
+        context[
+            "previous_validation_feedback"
+        ] = redact_sensitive_text(
+            str(validation_feedback)
+        )
 
     serialized = json.dumps(
         context,

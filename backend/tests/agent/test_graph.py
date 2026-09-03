@@ -226,3 +226,26 @@ def test_unknown_evidence_reference_is_rejected():
         == "INVALID_DIAGNOSIS_REFERENCE"
     )
 
+def test_invalid_request_stops_before_collection():
+    collector = FakeCollector()
+
+    graph = build_incident_graph(
+        collector=collector,
+    )
+
+    result = graph.invoke(
+        {
+            "request": {
+                "namespace": "default",
+                "service_name": "order-service",
+                "description": "服务无法访问",
+            }
+        }
+    )
+
+    assert result["phase"] == "failed"
+    assert result["valid"] is False
+    assert result["errors"][-1]["code"] == (
+        "NAMESPACE_NOT_ALLOWED"
+    )
+    assert collector.calls == []
