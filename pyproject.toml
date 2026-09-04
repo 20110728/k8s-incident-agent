@@ -1,14 +1,29 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "k8s-incident-agent"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
 dependencies = [
     "kubernetes",
     "pydantic>=2,<3",
     "langgraph>=1,<2",
+    "langgraph-checkpoint-postgres==3.1.2",
     "langchain>=1,<2",
     "langchain-openai",
     "langchain-postgres",
     "langchain-text-splitters",
     "psycopg[binary]",
     "pydantic-settings>=2,<3",
+    "fastapi==0.141.1",
+    "uvicorn[standard]==0.52.4",
+    "httpx==0.28.1",
 ]
+
+[tool.setuptools.packages.find]
+include = ["backend*"]
 
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]
