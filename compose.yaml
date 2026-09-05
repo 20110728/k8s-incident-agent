@@ -1,0 +1,103 @@
+name: k8s-incident-agent
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.6-pg16-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - incident-agent-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  runbook-indexer:
+    profiles:
+      - bootstrap
+    image: k8s-incident-agent-backend:day21
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    network_mode: host
+    env_file:
+      - .env
+    command:
+      - python
+      - -m
+      - scripts.index_runbooks
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  backend:
+    image: k8s-incident-agent-backend:day21
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    network_mode: host
+    restart: unless-stopped
+    init: true
+    user: "${LOCAL_UID:?Set LOCAL_UID}:${LOCAL_GID:?Set LOCAL_GID}"
+    env_file:
+      - .env
+    environment:
+      INCIDENT_AGENT_API_ENVIRONMENT: production
+      INCIDENT_AGENT_API_CORS_ALLOWED_ORIGINS: '["http://127.0.0.1:8080","http://localhost:8080"]'
+      LANGGRAPH_STRICT_MSGPACK: "true"
+      KUBERNETES_CONTEXT: ${KUBERNETES_CONTEXT:-kind-incident-agent}
+      KUBECONFIG: /tmp/kubeconfig
+      TMPDIR: /tmp
+      XDG_CACHE_HOME: /tmp/.cache
+    volumes:
+      - type: bind
+        source: ${KUBECONFIG_PATH:?Set KUBECONFIG_PATH}
+        target: /tmp/kubeconfig
+        read_only: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    stop_grace_period: 30s
+
+  frontend:
+    image: k8s-incident-agent-frontend:day21
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    network_mode: host
+    restart: unless-stopped
+    init: true
+    environment:
+      BACKEND_HOST: 127.0.0.1
+      BACKEND_PORT: "8000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    stop_grace_period: 15s
+
+volumes:
+  incident-agent-postgres:
+    external: true
+    name: ${POSTGRES_VOLUME_NAME:-postgres_incident-agent-postgres}

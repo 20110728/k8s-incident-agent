@@ -26,6 +26,7 @@ from backend.app.services.incident_service import (
     IncidentApplicationService,
 )
 
+from fastapi.middleware.cors import CORSMiddleware
 
 IncidentServiceContextFactory = Callable[
     [],
@@ -101,6 +102,25 @@ def create_app(
     app.state.ready = (
         resolved_settings.environment == "test"
     )
+
+    if resolved_settings.cors_allowed_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(
+                resolved_settings.cors_allowed_origins
+            ),
+            allow_credentials=False,
+            allow_methods=[
+                "GET",
+                "POST",
+                "OPTIONS",
+            ],
+            allow_headers=[
+                "Accept",
+                "Content-Type",
+            ],
+            max_age=600,
+        )
 
     register_exception_handlers(app)
     app.include_router(system_router)

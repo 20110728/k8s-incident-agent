@@ -37,3 +37,8 @@ dist/
 # Logs and temporary files
 *.log
 *.tmp
+
+# Local development audit artifacts
+/day*-stage*-audit.txt
+/day*-stage*-contract.txt
+/frontend-layout-current.txt
