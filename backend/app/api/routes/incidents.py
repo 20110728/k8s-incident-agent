@@ -15,10 +15,13 @@ from backend.app.api.schemas import (
     CreateIncidentRequest,
     ErrorResponse,
     IncidentStatusResponse,
+    SubmitApprovalRequest,
 )
 from backend.app.services.incident_service import (
     IncidentApplicationService,
+    IncidentApprovalConflictError,
     IncidentGraphError,
+    IncidentNotAwaitingApprovalError,
     IncidentNotFoundError,
     IncidentServiceError,
     IncidentSnapshot,
@@ -153,6 +156,100 @@ def get_incident(
             status_code=status.HTTP_404_NOT_FOUND,
             code="INCIDENT_NOT_FOUND",
             message="The requested incident was not found.",
+        ) from error
+
+    except IncidentGraphError as error:
+        _raise_graph_error(error)
+
+    except IncidentServiceError as error:
+        raise ApiError(
+            status_code=(
+                status.HTTP_500_INTERNAL_SERVER_ERROR
+            ),
+            code="INCIDENT_SERVICE_ERROR",
+            message="The incident service failed.",
+        ) from error
+
+    return _response_from_snapshot(snapshot)
+
+
+@router.post(
+    "/{incident_id}/approval",
+    response_model=IncidentStatusResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_404_NOT_FOUND: {
+            "model": ErrorResponse,
+            "description": "The incident does not exist.",
+        },
+        status.HTTP_409_CONFLICT: {
+            "model": ErrorResponse,
+            "description": (
+                "The incident is not awaiting approval or the "
+                "decision conflicts with existing state."
+            ),
+        },
+        status.HTTP_422_UNPROCESSABLE_ENTITY: {
+            "model": ErrorResponse,
+            "description": "The approval request is invalid.",
+        },
+        status.HTTP_500_INTERNAL_SERVER_ERROR: {
+            "model": ErrorResponse,
+            "description": "The incident service failed.",
+        },
+        status.HTTP_502_BAD_GATEWAY: {
+            "model": ErrorResponse,
+            "description": "The workflow dependency failed.",
+        },
+    },
+    summary="Submit an incident approval decision",
+    description=(
+        "Resumes a workflow paused for human approval and returns "
+        "the latest checkpointed state."
+    ),
+)
+def submit_approval(
+    incident_id: Annotated[
+        str,
+        Path(
+            min_length=1,
+            max_length=128,
+            pattern=r"^[a-zA-Z0-9-]+$",
+        ),
+    ],
+    request: SubmitApprovalRequest,
+    service: IncidentServiceDependency,
+) -> IncidentStatusResponse:
+    try:
+        snapshot = service.submit_approval(
+            incident_id,
+            request,
+        )
+
+    except IncidentNotFoundError as error:
+        raise ApiError(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="INCIDENT_NOT_FOUND",
+            message="The requested incident was not found.",
+        ) from error
+
+    except IncidentNotAwaitingApprovalError as error:
+        raise ApiError(
+            status_code=status.HTTP_409_CONFLICT,
+            code="INCIDENT_NOT_AWAITING_APPROVAL",
+            message=(
+                "The incident is not awaiting an approval decision."
+            ),
+        ) from error
+
+    except IncidentApprovalConflictError as error:
+        raise ApiError(
+            status_code=status.HTTP_409_CONFLICT,
+            code="APPROVAL_CONFLICT",
+            message=(
+                "The approval decision conflicts with the current "
+                "incident state."
+            ),
         ) from error
 
     except IncidentGraphError as error:

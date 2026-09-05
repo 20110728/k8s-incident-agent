@@ -4,6 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from backend.app.agent.schemas import (
     ActionExecutionResult,
+    ApprovalDecision,
     ApprovalRecord,
     ApprovalRequest,
     ApprovalStatus,
@@ -39,6 +40,8 @@ class ReadinessResponse(BaseModel):
 class CreateIncidentRequest(IncidentRequest):
     model_config = ConfigDict(extra="forbid")
 
+class SubmitApprovalRequest(ApprovalDecision):
+    """Strict HTTP payload used to resume a pending approval."""
 
 class IncidentStatusResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")

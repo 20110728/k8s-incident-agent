@@ -3,8 +3,10 @@ from types import SimpleNamespace
 from typing import Any
 
 from backend.app.agent.schemas import (
+    ApprovalDecision,
     IncidentRequest,
 )
+
 from backend.app.services.incident_service import (
     IncidentSnapshot,
 )
@@ -23,13 +25,16 @@ class FakeIncidentGraph:
         self,
         *,
         result: Mapping[str, Any] | None = None,
+        resume_result: Mapping[str, Any] | None = None,
         invoke_error: Exception | None = None,
         get_state_error: Exception | None = None,
     ) -> None:
         self.result = dict(result or {})
+        self.resume_result = dict(resume_result or {})
         self.invoke_error = invoke_error
         self.get_state_error = get_state_error
         self.invocations: list[dict[str, Any]] = []
+        self.resume_calls: list[dict[str, Any]] = []
         self.state_reads: list[dict[str, Any]] = []
         self.states: dict[str, dict[str, Any]] = {}
 
@@ -43,9 +48,30 @@ class FakeIncidentGraph:
 
     def invoke(
         self,
-        input: Mapping[str, Any],
+        input: Any,
         config: Mapping[str, Any],
     ) -> Mapping[str, Any]:
+        thread_id = self._thread_id(config)
+
+        if not isinstance(input, Mapping):
+            resume_value = getattr(input, "resume", None)
+            self.resume_calls.append(
+                {
+                    "resume": resume_value,
+                    "config": dict(config),
+                }
+            )
+
+            if self.invoke_error is not None:
+                raise self.invoke_error
+
+            result = {
+                **self.states.get(thread_id, {}),
+                **self.resume_result,
+            }
+            self.states[thread_id] = dict(result)
+            return result
+
         self.invocations.append(
             {
                 "input": dict(input),
@@ -56,7 +82,6 @@ class FakeIncidentGraph:
         if self.invoke_error is not None:
             raise self.invoke_error
 
-        thread_id = self._thread_id(config)
         result = {
             **dict(input),
             **self.result,
@@ -183,15 +208,23 @@ class FakeIncidentService:
         *,
         create_result: IncidentSnapshot | None = None,
         get_result: IncidentSnapshot | None = None,
+        approval_result: IncidentSnapshot | None = None,
         create_error: Exception | None = None,
         get_error: Exception | None = None,
+        approval_error: Exception | None = None,
     ) -> None:
         self.create_result = create_result
         self.get_result = get_result
+        self.approval_result = approval_result
         self.create_error = create_error
         self.get_error = get_error
+        self.approval_error = approval_error
+
         self.create_calls: list[IncidentRequest] = []
         self.get_calls: list[str] = []
+        self.approval_calls: list[
+            tuple[str, ApprovalDecision]
+        ] = []
 
     def create_incident(
         self,
@@ -224,3 +257,22 @@ class FakeIncidentService:
             )
 
         return self.get_result
+
+    def submit_approval(
+        self,
+        incident_id: str,
+        decision: ApprovalDecision,
+    ) -> IncidentSnapshot:
+        self.approval_calls.append(
+            (incident_id, decision)
+        )
+
+        if self.approval_error is not None:
+            raise self.approval_error
+
+        if self.approval_result is None:
+            raise AssertionError(
+                "fake approval result was not configured"
+            )
+
+        return self.approval_result

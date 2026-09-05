@@ -9,7 +9,9 @@ from backend.app.api.dependencies import (
 from backend.app.config import ApiSettings
 from backend.app.main import create_app
 from backend.app.services.incident_service import (
+    IncidentApprovalConflictError,
     IncidentGraphError,
+    IncidentNotAwaitingApprovalError,
     IncidentNotFoundError,
     IncidentSnapshot,
     IncidentServiceError,
@@ -23,6 +25,8 @@ INCIDENT_ID = "incident-api-test"
 INCIDENT_PATH = (
     f"/api/v1/incidents/{INCIDENT_ID}"
 )
+APPROVAL_PATH = f"{INCIDENT_PATH}/approval"
+APPROVAL_ID = "apr-0123456789abcdef"
 
 
 def incident_state() -> dict:
@@ -59,6 +63,43 @@ def incident_snapshot() -> IncidentSnapshot:
         thread_id=INCIDENT_ID,
         state=incident_state(),
     )
+
+
+def approval_snapshot(
+    *,
+    approved: bool,
+) -> IncidentSnapshot:
+    state = incident_state()
+    state.update(
+        {
+            "phase": (
+                "recovery_verified"
+                if approved
+                else "approval_rejected"
+            ),
+            "approved": approved,
+            "approval_status": (
+                "approved" if approved else "rejected"
+            ),
+        }
+    )
+    return IncidentSnapshot(
+        incident_id=INCIDENT_ID,
+        thread_id=INCIDENT_ID,
+        state=state,
+    )
+
+
+def approval_payload(
+    *,
+    approved: bool = True,
+) -> dict:
+    return {
+        "approval_id": APPROVAL_ID,
+        "approved": approved,
+        "approver": "test-operator",
+        "comment": "reviewed",
+    }
 
 
 def make_test_settings() -> ApiSettings:
@@ -257,6 +298,178 @@ def test_invalid_incident_id_is_rejected() -> None:
     assert service.get_calls == []
 
 
+def test_submit_approval_returns_current_state() -> None:
+    service = FakeIncidentService(
+        approval_result=approval_snapshot(
+            approved=True
+        )
+    )
+
+    with client_for(service) as client:
+        response = client.post(
+            APPROVAL_PATH,
+            json=approval_payload(),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["phase"] == (
+        "recovery_verified"
+    )
+    assert response.json()["approved"] is True
+    assert len(service.approval_calls) == 1
+    incident_id, decision = service.approval_calls[0]
+    assert incident_id == INCIDENT_ID
+    assert decision.approval_id == APPROVAL_ID
+    assert decision.approver == "test-operator"
+
+
+def test_submit_rejection_returns_rejected_state() -> None:
+    service = FakeIncidentService(
+        approval_result=approval_snapshot(
+            approved=False
+        )
+    )
+
+    with client_for(service) as client:
+        response = client.post(
+            APPROVAL_PATH,
+            json=approval_payload(approved=False),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["phase"] == (
+        "approval_rejected"
+    )
+    assert response.json()["approved"] is False
+
+
+def test_invalid_approval_payload_is_rejected() -> None:
+    service = FakeIncidentService()
+    payload = approval_payload()
+    payload["approved"] = "true"
+    payload["unexpected"] = "forbidden"
+
+    with client_for(service) as client:
+        response = client.post(
+            APPROVAL_PATH,
+            json=payload,
+        )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == (
+        "REQUEST_VALIDATION_ERROR"
+    )
+    assert service.approval_calls == []
+
+
+def test_invalid_approval_incident_id_is_rejected() -> None:
+    service = FakeIncidentService()
+
+    with client_for(service) as client:
+        response = client.post(
+            "/api/v1/incidents/invalid_id/approval",
+            json=approval_payload(),
+        )
+
+    assert response.status_code == 422
+    assert service.approval_calls == []
+
+
+def test_approval_unknown_incident_returns_404() -> None:
+    service = FakeIncidentService(
+        approval_error=IncidentNotFoundError(
+            "incident was not found"
+        )
+    )
+
+    with client_for(service) as client:
+        response = client.post(
+            APPROVAL_PATH,
+            json=approval_payload(),
+        )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == (
+        "INCIDENT_NOT_FOUND"
+    )
+
+
+def test_incident_not_awaiting_approval_returns_409() -> None:
+    service = FakeIncidentService(
+        approval_error=IncidentNotAwaitingApprovalError(
+            "incident is not awaiting approval"
+        )
+    )
+
+    with client_for(service) as client:
+        response = client.post(
+            APPROVAL_PATH,
+            json=approval_payload(),
+        )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == (
+        "INCIDENT_NOT_AWAITING_APPROVAL"
+    )
+
+
+def test_approval_conflict_returns_409() -> None:
+    service = FakeIncidentService(
+        approval_error=IncidentApprovalConflictError(
+            "approval conflict"
+        )
+    )
+
+    with client_for(service) as client:
+        response = client.post(
+            APPROVAL_PATH,
+            json=approval_payload(),
+        )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == (
+        "APPROVAL_CONFLICT"
+    )
+
+
+def test_approval_graph_failure_returns_502() -> None:
+    service = FakeIncidentService(
+        approval_error=IncidentGraphError(
+            "fake graph failure"
+        )
+    )
+
+    with client_for(service) as client:
+        response = client.post(
+            APPROVAL_PATH,
+            json=approval_payload(),
+        )
+
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == (
+        "INCIDENT_PROCESSING_FAILED"
+    )
+
+
+def test_approval_service_failure_returns_500() -> None:
+    service = FakeIncidentService(
+        approval_error=IncidentServiceError(
+            "fake persistence failure"
+        )
+    )
+
+    with client_for(service) as client:
+        response = client.post(
+            APPROVAL_PATH,
+            json=approval_payload(),
+        )
+
+    assert response.status_code == 500
+    assert response.json()["error"]["code"] == (
+        "INCIDENT_SERVICE_ERROR"
+    )
+
+
 def test_openapi_contains_incident_contracts() -> None:
     service = FakeIncidentService()
 
@@ -277,3 +490,8 @@ def test_openapi_contains_incident_contracts() -> None:
             "/api/v1/incidents/{incident_id}"
         ]
     )
+    approval_path = (
+        "/api/v1/incidents/{incident_id}/approval"
+    )
+    assert approval_path in paths
+    assert "post" in paths[approval_path]
