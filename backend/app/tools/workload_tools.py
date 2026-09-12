@@ -128,6 +128,9 @@ def get_deployment_config(
     return DeploymentInfo(
         namespace=namespace,
         name=deployment.metadata.name,
+        uid=getattr(deployment.metadata, "uid", None),
+        generation=getattr(deployment.metadata, "generation", None),
+        resource_version=getattr(deployment.metadata, "resource_version", None),
         desired_replicas=deployment.spec.replicas or 0,
         ready_replicas=status.ready_replicas or 0,
         available_replicas=status.available_replicas or 0,

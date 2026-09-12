@@ -1,3 +1,6 @@
+# 受控执行器：授权通过后重新读取现场配置，再调用两种固定资源修改工具。
+# 现场版本或配置变化返回冲突，要求重新采集与审批。
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -15,6 +18,9 @@ from backend.app.agent.schemas import (
     ResourceMutationResult,
 )
 from backend.app.agent.state import IncidentState
+from backend.app.service_profiles.registry import (
+    ProfileUnavailable, revalidate_live_profile,
+)
 from backend.app.tools.client import (
     KubernetesClients,
 )
@@ -108,6 +114,7 @@ class KubernetesRemediationExecutor:
     def _execute_readiness_probe(
         self,
         authorization: ExecutionAuthorization,
+        expected_resource_version: str,
     ) -> ResourceMutationResult:
         parameters = (
             authorization.plan.parameters
@@ -144,6 +151,7 @@ class KubernetesRemediationExecutor:
             )
 
         return self._patch_readiness_probe(
+            expected_resource_version=expected_resource_version,
             clients=self._clients,
             namespace=parameters.namespace,
             deployment_name=(
@@ -169,6 +177,7 @@ class KubernetesRemediationExecutor:
     def _execute_authorized_action(
         self,
         authorization: ExecutionAuthorization,
+        deployment_resource_version: str,
     ) -> ResourceMutationResult:
         action = authorization.plan.action
 
@@ -179,7 +188,7 @@ class KubernetesRemediationExecutor:
 
         if action == "patch_readiness_probe":
             return self._execute_readiness_probe(
-                authorization
+                authorization, deployment_resource_version
             )
 
         raise InvalidExecutionAuthorization(
@@ -212,9 +221,11 @@ class KubernetesRemediationExecutor:
         started_at = self._now()
 
         try:
+            # 审批后可能发生发布或人工修改，必须在真正写入前重新检查现场。
+            live = revalidate_live_profile(state, self._clients, authorization.plan)
             mutation_result = (
                 self._execute_authorized_action(
-                    authorization
+                    authorization, live["resource_version"]
                 )
             )
 
@@ -227,6 +238,14 @@ class KubernetesRemediationExecutor:
                         mutation_result
                     )
                 )
+
+        except ProfileUnavailable as error:
+            mutation_result = ResourceMutationResult(
+                status="conflict", before_snapshot=None, after_snapshot=None,
+                applied_patch={}, rollback_patch={},
+                message="Service contract or application changed; collect evidence and approve again.",
+                error_code="SERVICE_PROFILE_PRECONDITION_FAILED", error_message=str(error),
+            )
 
         except InvalidExecutionAuthorization:
             raise

@@ -1,3 +1,6 @@
+# 执行授权复核：校验审批状态、计划绑定和既有执行结果。
+# 已完成的执行可复用结果；同一审批不能被替换计划后继续使用。
+
 from __future__ import annotations
 
 import hashlib

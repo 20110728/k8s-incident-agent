@@ -7,7 +7,7 @@ from langchain_core.messages import (
 )
 from langchain_openai import ChatOpenAI
 
-from backend.app.agent.schemas import Diagnosis
+from backend.app.agent.schemas import Diagnosis, CurrentDiagnosis
 from backend.app.llm.context_builder import (
     build_diagnosis_context,
 )
@@ -41,7 +41,7 @@ class ChatDiagnosisService:
         self._model_name = model_name
         self._structured_model = (
             model.with_structured_output(
-                Diagnosis,
+                CurrentDiagnosis,
                 method="json_schema",
                 strict=True,
                 include_raw=True,
@@ -85,8 +85,8 @@ class ChatDiagnosisService:
                 "model returned no parsed diagnosis"
             )
 
-        if not isinstance(parsed, Diagnosis):
-            parsed = Diagnosis.model_validate(parsed)
+        if not isinstance(parsed, CurrentDiagnosis):
+            parsed = CurrentDiagnosis.model_validate(parsed)
 
         raw = response.get("raw")
         usage: dict[str, int] = {}

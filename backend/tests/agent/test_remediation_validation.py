@@ -1,3 +1,4 @@
+from backend.tests.service_profiles.fixtures import with_profile
 import pytest
 from pydantic import ValidationError
 
@@ -17,7 +18,7 @@ from backend.app.agent.schemas import (
 
 
 def selector_state() -> dict:
-    return {
+    return with_profile({
         "request": {
             "namespace": "agent-demo",
             "service_name": "order-service",
@@ -68,7 +69,7 @@ def selector_state() -> dict:
                 ),
             }
         ],
-    }
+    })
 
 
 def selector_plan() -> RemediationPlan:
@@ -201,7 +202,7 @@ def test_selector_must_match_evidenced_labels():
 
     with pytest.raises(
         InvalidRemediationPlan,
-        match="does not match any evidenced",
+        match="SELECTOR_NOT_REGISTERED",
     ):
         validate_remediation_plan(
             plan=plan,
@@ -394,7 +395,7 @@ def test_readiness_without_candidate_only_allows_manual():
     }
 
 
-def test_readiness_with_liveness_candidate_allows_patch():
+def test_liveness_alone_does_not_authorize_readiness_patch():
     actions = get_allowed_remediation_actions(
         readiness_state(
             liveness_probe={
@@ -406,7 +407,6 @@ def test_readiness_with_liveness_candidate_allows_patch():
 
     assert actions == {
         "manual_investigation",
-        "patch_readiness_probe",
     }
 
 
@@ -421,7 +421,7 @@ def test_guessed_readiness_path_is_rejected():
         )
 
 
-def test_grounded_readiness_path_is_accepted():
+def test_registered_readiness_path_is_accepted():
     state = readiness_state(
         liveness_probe={
             "path": "/healthz",
@@ -429,6 +429,7 @@ def test_grounded_readiness_path_is_accepted():
         }
     )
 
+    with_profile(state)
     result = validate_remediation_plan(
         plan=readiness_patch_plan(),
         state=state,

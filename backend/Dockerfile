@@ -24,6 +24,7 @@ COPY pyproject.toml ./
 COPY backend ./backend
 COPY scripts ./scripts
 COPY knowledge ./knowledge
+COPY config/service-profiles ./config/service-profiles
 
 RUN python -m pip install --no-cache-dir . \
     && chown -R incident-agent:incident-agent \

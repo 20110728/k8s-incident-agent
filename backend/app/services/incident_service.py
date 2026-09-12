@@ -1,3 +1,6 @@
+# 应用服务层：协调事件创建、查询、图状态读取与人工审批后的工作流恢复。
+# 保留仓库层和图检查点的既有一致性机制；API 不直接绕过图调用修改工具。
+
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping

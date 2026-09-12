@@ -1,0 +1,110 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: incident-agent-business-probe
+  namespace: agent-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: incident-agent-business-probe
+  template:
+    metadata:
+      labels:
+        app: incident-agent-business-probe
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: probe
+          image: k8s-business-probe:0.2.0
+          imagePullPolicy: Never
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              cpu: 500m
+              memory: 192Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: targets
+              mountPath: /etc/business-probe
+              readOnly: true
+      volumes:
+        - name: targets
+          configMap:
+            name: incident-agent-business-probe-targets
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: incident-agent-business-probe
+  namespace: agent-demo
+spec:
+  type: ClusterIP
+  selector:
+    app: incident-agent-business-probe
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: incident-agent-business-probe-client
+  namespace: agent-demo
+rules:
+  - apiGroups: [""]
+    resources: [services/proxy]
+    resourceNames:
+      - incident-agent-business-probe
+      - incident-agent-business-probe:80
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: incident-agent-business-probe-client
+  namespace: agent-demo
+subjects:
+  - kind: ServiceAccount
+    name: incident-agent
+    namespace: agent-demo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: incident-agent-business-probe-client

@@ -62,11 +62,14 @@ class IncidentStatusResponse(BaseModel):
         default_factory=list,
     )
 
+    service_profile: dict[str, Any] | None = None
     retrieval_query: str | None = None
     retrieved_runbooks: list[dict[str, Any]] = Field(
         default_factory=list,
     )
 
+    # Audit only: untrusted original model prose, not the authoritative report.
+    diagnosis_model_output: dict[str, Any] | None = None
     diagnosis: Diagnosis | None = None
     llm_model: str | None = None
     llm_usage: dict[str, int] = Field(
@@ -137,6 +140,7 @@ class IncidentStatusResponse(BaseModel):
             evidence=list(
                 state.get("evidence") or []
             ),
+            service_profile=state.get("service_profile"),
             retrieval_query=state.get(
                 "retrieval_query"
             ),
@@ -144,6 +148,7 @@ class IncidentStatusResponse(BaseModel):
                 state.get("retrieved_runbooks")
                 or []
             ),
+            diagnosis_model_output=state.get("diagnosis_model_output"),
             diagnosis=state.get("diagnosis"),
             llm_model=state.get("llm_model"),
             llm_usage=dict(

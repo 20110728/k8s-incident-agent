@@ -595,7 +595,10 @@ def patch_service_selector(
             ),
         },
         "spec": {
-            "selector": safe_proposed_selector,
+            "selector": {
+                **{key: None for key in current_selector if key not in safe_proposed_selector},
+                **safe_proposed_selector,
+            },
         },
     }
 
@@ -647,7 +650,10 @@ def patch_service_selector(
             ),
         },
         "spec": {
-            "selector": current_selector,
+            "selector": {
+                **{key: None for key in safe_proposed_selector if key not in current_selector},
+                **current_selector,
+            },
         },
     }
 
@@ -676,6 +682,7 @@ def patch_readiness_probe(
     proposed_path: str,
     expected_port: str | int,
     proposed_port: str | int,
+    expected_resource_version: str | None = None,
 ) -> ResourceMutationResult:
     safe_namespace = _validate_namespace(
         namespace
@@ -730,6 +737,14 @@ def patch_readiness_probe(
     except Exception as error:
         return _unexpected_error_result(
             error
+        )
+
+    if (expected_resource_version is not None
+            and _resource_version(deployment) != expected_resource_version):
+        return _conflict_result(
+            error_code="PROFILE_RESOURCE_VERSION_CONFLICT",
+            error_message="Deployment changed since service profile validation.",
+            before_snapshot=None,
         )
 
     container = _find_container(

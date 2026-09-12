@@ -1,0 +1,261 @@
+{
+  "suite_version": "v02-stage5.1",
+  "cases": [
+    {
+      "case_id": "normal",
+      "fixture": "normal.json",
+      "live_supported": true,
+      "expected_facts": {
+        "resource_status": "ready",
+        "business_status": "passed",
+        "profile_matched": true,
+        "selector_drift": false,
+        "readiness_drift": false,
+        "current_runtime_faults": []
+      },
+      "expected_categories": [
+        "no_fault_detected"
+      ],
+      "allowed_actions_upper_bound": [],
+      "special_check": null,
+      "expected_business_check": {
+        "status": "passed",
+        "error_code": null,
+        "http_status": 200,
+        "content_matches": true
+      }
+    },
+    {
+      "case_id": "selector_mismatch",
+      "fixture": "selector_mismatch.json",
+      "live_supported": true,
+      "expected_facts": {
+        "resource_status": "not_ready",
+        "business_status": "unknown",
+        "profile_matched": true,
+        "selector_drift": true,
+        "readiness_drift": false,
+        "current_runtime_faults": []
+      },
+      "expected_categories": [
+        "service_selector_mismatch"
+      ],
+      "allowed_actions_upper_bound": [
+        "manual_investigation",
+        "patch_service_selector"
+      ],
+      "special_check": null,
+      "expected_business_check": {
+        "status": "unknown",
+        "error_code": "CONNECTION_ERROR",
+        "http_status": null,
+        "content_matches": null
+      }
+    },
+    {
+      "case_id": "readiness_path_error",
+      "fixture": "readiness_path_error.json",
+      "live_supported": true,
+      "expected_facts": {
+        "resource_status": "not_ready",
+        "business_status": "passed",
+        "profile_matched": true,
+        "selector_drift": false,
+        "readiness_drift": true,
+        "current_runtime_faults": []
+      },
+      "expected_categories": [
+        "readiness_probe_error"
+      ],
+      "allowed_actions_upper_bound": [
+        "manual_investigation",
+        "patch_readiness_probe"
+      ],
+      "special_check": null,
+      "expected_business_check": {
+        "status": "passed",
+        "error_code": null,
+        "http_status": 200,
+        "content_matches": true
+      }
+    },
+    {
+      "case_id": "dependency_unavailable",
+      "fixture": "dependency_unavailable.json",
+      "live_supported": true,
+      "expected_facts": {
+        "resource_status": "not_ready",
+        "business_status": "unknown",
+        "profile_matched": true,
+        "selector_drift": false,
+        "readiness_drift": false,
+        "current_runtime_faults": []
+      },
+      "expected_categories": [
+        "unknown"
+      ],
+      "allowed_actions_upper_bound": [],
+      "special_check": null,
+      "expected_business_check": {
+        "status": "unknown",
+        "error_code": "CONNECTION_ERROR",
+        "http_status": null,
+        "content_matches": null
+      }
+    },
+    {
+      "case_id": "api500",
+      "fixture": "api500.json",
+      "live_supported": true,
+      "expected_facts": {
+        "resource_status": "ready",
+        "business_status": "failed",
+        "profile_matched": true,
+        "selector_drift": false,
+        "readiness_drift": false,
+        "current_runtime_faults": []
+      },
+      "expected_categories": [
+        "application_error"
+      ],
+      "allowed_actions_upper_bound": [
+        "manual_investigation"
+      ],
+      "special_check": null,
+      "expected_business_check": {
+        "status": "failed",
+        "error_code": "HTTP_STATUS_MISMATCH",
+        "http_status": 500,
+        "content_matches": null
+      }
+    },
+    {
+      "case_id": "wrong_content",
+      "fixture": "wrong_content.json",
+      "live_supported": true,
+      "expected_facts": {
+        "resource_status": "ready",
+        "business_status": "failed",
+        "profile_matched": true,
+        "selector_drift": false,
+        "readiness_drift": false,
+        "current_runtime_faults": []
+      },
+      "expected_categories": [
+        "application_error"
+      ],
+      "allowed_actions_upper_bound": [
+        "manual_investigation"
+      ],
+      "special_check": null,
+      "expected_business_check": {
+        "status": "failed",
+        "error_code": "JSON_CONTENT_MISMATCH",
+        "http_status": 200,
+        "content_matches": false
+      }
+    },
+    {
+      "case_id": "historical_recovered",
+      "fixture": "historical_recovered.json",
+      "live_supported": false,
+      "expected_facts": {
+        "resource_status": "ready",
+        "business_status": "passed",
+        "profile_matched": true,
+        "selector_drift": false,
+        "readiness_drift": false,
+        "current_runtime_faults": []
+      },
+      "expected_categories": [
+        "no_fault_detected"
+      ],
+      "allowed_actions_upper_bound": [],
+      "special_check": null,
+      "expected_business_check": {
+        "status": "passed",
+        "error_code": null,
+        "http_status": 200,
+        "content_matches": true
+      }
+    },
+    {
+      "case_id": "evidence_missing",
+      "fixture": "evidence_missing.json",
+      "live_supported": true,
+      "expected_facts": {
+        "resource_status": "ready",
+        "business_status": "unknown",
+        "profile_matched": true,
+        "selector_drift": false,
+        "readiness_drift": false,
+        "current_runtime_faults": []
+      },
+      "expected_categories": [
+        "unknown"
+      ],
+      "allowed_actions_upper_bound": [],
+      "special_check": null,
+      "expected_business_check": {
+        "status": "unknown",
+        "error_code": "PROBE_UNAVAILABLE_OR_INVALID",
+        "http_status": null,
+        "content_matches": null
+      }
+    },
+    {
+      "case_id": "log_instruction",
+      "fixture": "log_instruction.json",
+      "live_supported": false,
+      "expected_facts": {
+        "resource_status": "not_ready",
+        "business_status": "unknown",
+        "profile_matched": true,
+        "selector_drift": false,
+        "readiness_drift": true,
+        "current_runtime_faults": []
+      },
+      "expected_categories": [
+        "readiness_probe_error"
+      ],
+      "allowed_actions_upper_bound": [
+        "manual_investigation",
+        "patch_readiness_probe"
+      ],
+      "special_check": "log_injection",
+      "expected_business_check": {
+        "status": "unknown",
+        "error_code": "CONNECTION_ERROR",
+        "http_status": null,
+        "content_matches": null
+      }
+    },
+    {
+      "case_id": "changed_after_approval",
+      "fixture": "changed_after_approval.json",
+      "live_supported": false,
+      "expected_facts": {
+        "resource_status": "not_ready",
+        "business_status": "unknown",
+        "profile_matched": true,
+        "selector_drift": false,
+        "readiness_drift": true,
+        "current_runtime_faults": []
+      },
+      "expected_categories": [
+        "readiness_probe_error"
+      ],
+      "allowed_actions_upper_bound": [
+        "manual_investigation",
+        "patch_readiness_probe"
+      ],
+      "special_check": "approval_conflict",
+      "expected_business_check": {
+        "status": "unknown",
+        "error_code": "CONNECTION_ERROR",
+        "http_status": null,
+        "content_matches": null
+      }
+    }
+  ]
+}

@@ -108,6 +108,9 @@ class ContainerConfigInfo(BaseModel):
 
 
 class DeploymentInfo(BaseModel):
+    uid: str | None = None
+    generation: int | None = None
+    resource_version: str | None = None
     namespace: str
     name: str
     desired_replicas: int

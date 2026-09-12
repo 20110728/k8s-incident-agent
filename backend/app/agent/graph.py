@@ -1,3 +1,6 @@
+# 工作流入口：按状态连接采集、检索、诊断、规划、审批、执行和验证节点。
+# unknown 与 no_fault_detected 跳过处置规划；有写操作的计划必须走人工审批。
+
 from langgraph.graph import (
     END,
     START,

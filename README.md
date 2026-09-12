@@ -1,396 +1,148 @@
 # Kubernetes Incident Agent
 
-一个基于 LangGraph 的 Kubernetes 事故诊断与受控处置 Agent。系统从指定
-Service 出发采集只读集群证据，结合 pgvector 中的 Runbook 和 LLM 生成结构化
-诊断及处置方案；所有可执行写操作都必须通过人工审批、白名单校验和执行时重验，
-最后对 Deployment、Pod 和 EndpointSlice 进行恢复验证。
+面向 Kubernetes 应用发布与运行异常的诊断及受控处置工具。基于 Python、FastAPI、LangGraph、PostgreSQL/pgvector 和 React/TypeScript，使用 Docker Compose 运行后端与页面，使用 kind 运行演示应用及集群内业务检查器。
 
-项目提供 FastAPI、React 管理界面、PostgreSQL/PostgresSaver 持久化、故障注入
-清单，以及适用于 Linux + kind 本地演示环境的 Docker Compose 启停流程。
+当前为 **v0.2 开发阶段快照：已推进至阶段 5**。本轮固定案例回归和真实集群事实批测已由维护者在阿里云 ECS 上报告全部通过。本文没有将其标记为完整 v0.2 发布验收；阶段 6–8 尚待实施。Python 包和 API 默认版本号仍为 `0.1.0`，不要用它们判断阶段进度。
 
-## 核心能力
+## 相比 Day21 的更新
 
-| 模块 | 能力 |
-| --- | --- |
-| Kubernetes Evidence | 从 Service 关联到 Pod、ReplicaSet、Deployment、EndpointSlice 和 Node，采集状态、事件与日志 |
-| Runbook RAG | 加载 Markdown Runbook，生成稳定文档 ID，并通过 PostgreSQL/pgvector 检索相关片段 |
-| 结构化诊断 | 使用受 Pydantic 模型约束的 LLM 输出故障类别、根因、置信度和引用 ID |
-| 引用校验 | 拒绝不存在、重复或未被当前 Evidence/Runbook 支持的引用 |
-| 处置规划 | 生成封闭参数结构，不接受任意 Shell 命令或自由格式 Kubernetes Patch |
-| Human-in-the-loop | 使用 LangGraph `interrupt()` 暂停流程，通过批准或拒绝恢复同一 thread |
-| 受控执行 | 仅允许白名单动作；审批记录、计划、事故和执行 ID 相互绑定 |
-| 恢复验证 | 写入后检查探针/selector、Deployment generation、replicas、Ready Pod 和 EndpointSlice |
-| 持久化恢复 | Incident Repository 保存元数据，PostgresSaver 保存完整 Graph State，支持进程重启恢复 |
-| Web/API | FastAPI 提供事故创建、状态查询和审批接口；React 展示诊断、证据、Runbook、审批与执行结果 |
-
-## 系统架构
-
-```mermaid
-flowchart TD
-    UI[React TypeScript UI] --> NX[Nginx]
-    NX --> API[FastAPI]
-    API --> LG[LangGraph workflow]
-    LG --> K8S[Kubernetes API]
-    LG --> LLM[LLM and Embedding API]
-    LG --> PG[(PostgreSQL)]
-    PG --> VS[pgvector Runbooks]
-    PG --> CP[Incidents and checkpoints]
-```
-
-生产前端由 Nginx 在 `8080` 端口提供，并把 `/api`、`/healthz` 和 `/readyz`
-转发到 `8000` 端口的 FastAPI。后端使用同步 LangGraph 调用链，在 FastAPI
-lifespan 内持有 PostgreSQL checkpointer 连接。
-
-## 工作流
-
-```mermaid
-flowchart TD
-    S([Start]) --> V[Validate request]
-    V --> C[Collect Kubernetes evidence]
-    C --> R[Retrieve Runbooks]
-    R --> D[Structured diagnosis]
-    D --> F{Fault requires a plan?}
-    F -->|No or unknown| SK[Skip remediation]
-    F -->|Yes| P[Plan and validate remediation]
-    P --> G{Write action?}
-    G -->|Manual investigation| E([End])
-    G -->|Allowlisted write| H[Human approval interrupt]
-    H -->|Reject| RJ[approval_rejected]
-    H -->|Approve| A[Revalidate authorization]
-    A --> X[Execute action]
-    X --> VR[Verify recovery]
-    VR --> E
-    SK --> E
-    RJ --> E
-```
-
-主要成功/终止状态：
-
-| Phase | 含义 |
-| --- | --- |
-| `remediation_skipped` | 未检测到故障或诊断不需要自动处置 |
-| `remediation_planned` | 已生成仅供人工处理的方案，或当前方案无需执行 |
-| `awaiting_approval` | Graph 已中断，等待人工决定 |
-| `approval_rejected` | 人工拒绝，执行器和恢复验证器不会运行 |
-| `verification_succeeded` | 写操作成功或已应用，且恢复验证通过 |
-| `remediation_execution_conflict` | 执行前发现资源并发变化 |
-| `remediation_execution_failed` | Kubernetes 写操作失败 |
-| `verification_failed` | 写入完成，但恢复验证失败或超时 |
-
-## 支持范围
-
-当前演示环境限定在 `agent-demo` namespace，入口资源为 Kubernetes Service。
-
-| 故障类别 | 诊断 | 自动写操作 |
+| 阶段 | 已实现内容 | 实现位置 |
 | --- | --- | --- |
-| `crash_loop_backoff` | 支持 | 不执行，仅生成 `manual_investigation` |
-| `image_pull_backoff` | 支持 | 不执行，仅生成 `manual_investigation` |
-| `oom_killed` | 支持 | 不执行，仅生成 `manual_investigation` |
-| `readiness_probe_error` | 支持 | `patch_readiness_probe` |
-| `service_selector_mismatch` | 支持 | `patch_service_selector` |
-| `no_fault_detected` / `unknown` | 支持 | 跳过处置 |
+| 1：版本化服务配置 | 资源关联、负责人、配置来源、版本与镜像匹配、预期 selector/探针、只读业务检查约定；执行前复核配置摘要和 Deployment 身份 | `config/service-profiles/`、`backend/app/service_profiles/` |
+| 2：HTTP Demo | 订单服务及独立模拟下游；存活、就绪、业务接口分离；依赖中断、接口 500、响应内容错误场景 | `infra/demo-app/`、`scripts/demo_v02.sh` |
+| 3：业务 Evidence | 集群内检查器通过登记 Service 访问接口；验证状态码和 JSON 字段；检查器异常、连接失败保留未知 | `backend/app/business_checks/`、`infra/business-probe/` |
+| 4：诊断与修复门槛 | 资源与业务状态分开；症状、根因假设、缺失证据、下一步调查；引用与语义校验；本地证据不足预判；受控报告与模型原始输出审计 | `backend/app/agent/diagnosis_policy.py`、`diagnosis_report.py`、`nodes.py`、`remediation_policy.py` |
+| 5：固定案例 | 十个固定案例、七个真实集群事实场景、合成安全回放、独立结果目录与输入摘要 | `evals/cases/v02-stage5/`、`scripts/fault_cases/`、`scripts/run_fault_case.py` |
 
-`infra/faults/` 提供对应的可重复故障清单。可执行写操作仅有：
+原有人工审批、审批绑定、并发保护、执行结果复用、检查点和事件持久化机制继续保留。详细变更见 [CHANGELOG.md](CHANGELOG.md)，代码阅读顺序见 [docs/CODE_READING.md](docs/CODE_READING.md)。
 
-- `patch_readiness_probe`
-- `patch_service_selector`
+## 能力边界
 
-## 安全边界
+- Agent 写操作仅支持修正 `agent-demo` 内登记对象的 Service selector 和 readiness probe；需要可信配置依据、计划校验和人工审批。
+- 应用版本或镜像声明不匹配，或者审批后配置/资源发生变化，不能继续按旧配置写入。镜像字符串匹配不代表镜像签名或内容可信证明。
+- 不把 Pod Ready 当作业务恢复；不把 readiness 失败直接当作探针配置错误；业务响应失败时不能靠放宽探针掩盖异常。
+- 诊断中的 `resource_status` 与 `business_status` 是本次采集的诊断快照。现有 `verification_result` 仍是处置后的 Kubernetes 资源验证，尚不包含处置后的业务验证。
+- `business_status=passed` 仅覆盖登记接口的本次请求，不覆盖集群外入口、未登记接口、每个副本或长期稳定性。
+- 依赖故障注入的真实原因已知，但 Agent 当前没有独立下游检查证据；满足本地预判条件时报告 `unknown / insufficient_evidence`，不假装确认依赖根因。
+- 尚未完成真实受限 Kubernetes 身份验收、登录认证和审批角色授权。当前适合受控的单人演示环境。
+- 操作者脚本可以注入故障；它们不属于 Agent 工具集。没有任意 Shell、自动代码修复、多集群、多 Agent 或 Kafka 架构。
 
-LLM 的输出不会直接成为 Kubernetes 命令。写操作必须依次通过以下边界：
+## 运行结构
 
-1. 请求、诊断、处置方案和审批决定都使用严格的 Pydantic 模型。
-2. 诊断只能引用本次工作流中实际存在的 Evidence ID 和 Runbook ID。
-3. 处置方案只能使用预定义 action 和封闭参数字段，文本中禁止嵌入
-   `kubectl`、`helm`、Shell、`curl`、`wget` 或 Docker 命令。
-4. 写操作限定在 `agent-demo`，目标和值必须能由当前事故请求和 Kubernetes
-   Evidence 证明。
-5. 所有可执行方案必须进入 `interrupt()`，没有有效审批记录不能到达执行器。
-6. 审批 ID、事故 ID、处置计划和执行 ID 相互绑定；重复或冲突决定返回 `409`。
-7. 执行前重新读取资源，比较当前值，并使用 `metadata.resourceVersion` 防止覆盖
-   并发修改。
-8. 已成功执行的 action 不会重复执行；失败结果不能借用旧审批绕过检查。
-9. PostgresSaver 强制启用严格 Msgpack 反序列化。
-10. 执行结果保存修改前后快照、applied patch 和 rollback patch，并进行恢复验证。
+Compose 运行 PostgreSQL/pgvector、FastAPI 后端与 React 页面。后端通过 Kubernetes API 采集资源，并访问集群内专用检查器。检查器解析登记 Service DNS，核对 ClusterIP 后通过该 Service 地址发出 HTTP 请求。
 
-项目会生成回滚补丁，但当前版本**不会自动执行回滚**。如果恢复验证失败，需要操作者
-检查结果并发起新的受控流程。
+后端不需要解析集群 DNS。访问检查器所用的 API Service proxy 不等于代理业务 Service；实际业务请求由集群内检查器发出，不使用业务 Service 的 port-forward 证明转发正常。
 
-`infra/rbac/` 定义了 `incident-agent` ServiceAccount 的最小读取和指定资源 Patch
-权限。本地 Compose 挂载的是当前 kubeconfig，因此实际权限取决于该 kubeconfig
-使用的身份；需要验证最小权限时，应使用受限 kubeconfig 或把 Agent 部署到集群内并
-使用该 ServiceAccount。
+主要流程：请求校验 → 证据采集 → Runbook 检索 → 结构化诊断与本地校验 → 处置规划 → 人工审批 → 执行前复核 → 固定工具写入 → 资源验证。
 
-## 技术栈
+证据不足和未检测到故障的诊断跳过处置规划。`diagnosis` 是正式报告，`diagnosis_model_output` 保留模型结构化原始输出供审计。
 
-- Python 3.12、FastAPI、Pydantic
-- LangGraph、LangChain、LangChain PostgreSQL
-- PostgreSQL 16、pgvector、Psycopg 3
-- Kubernetes Python Client、kind、kubectl
-- React 19、TypeScript 6、Vite 8、Vitest、Oxlint
-- Docker、Docker Compose、Nginx
-- OpenAI-compatible LLM/Embedding API
+## 环境与启动
 
-## 目录结构
+适用环境：Linux 云服务器、Python 3.12、Docker Compose、kubectl、kind；通过 VS Code SSH 开发。以下命令在仓库根目录执行。已有验收环境不必重新安装或重建集群。
 
-```text
-.
-├── backend/
-│   ├── app/
-│   │   ├── agent/          # Graph、节点、审批、策略、执行和恢复验证
-│   │   ├── api/            # FastAPI 路由、Schema、依赖和错误映射
-│   │   ├── llm/            # 诊断/处置模型客户端、Prompt 和上下文构造
-│   │   ├── persistence/    # PostgreSQL、Incident Repository、迁移、PostgresSaver
-│   │   ├── rag/            # Runbook 加载、Embedding、pgvector 和检索
-│   │   └── tools/          # Kubernetes 只读工具和受控 Patch 工具
-│   ├── tests/              # Fake 驱动的分层 pytest 测试
-│   └── Dockerfile
-├── frontend/
-│   ├── src/api/            # 类型化 API Client 和统一错误
-│   ├── src/features/       # 创建、轮询、诊断、审批、执行和恢复结果 UI
-│   ├── nginx/              # 生产静态托管和 API 反向代理
-│   └── Dockerfile
-├── infra/
-│   ├── demo-app/           # 健康基线
-│   ├── faults/             # 五类故障注入清单
-│   ├── kind/               # 两节点 kind 集群配置
-│   ├── postgres/           # 独立 pgvector Compose
-│   └── rbac/               # Reader/Remediator RBAC
-├── knowledge/runbooks/     # Markdown Runbook 知识库
-├── scripts/                # 索引、诊断、RBAC 和 Compose 脚本
-├── compose.yaml
-├── pyproject.toml
-└── .env.example
-```
-
-## 前置条件
-
-完整 Compose 流程针对 Linux 开发主机，要求：
-
-- Docker Engine 和 Docker Compose v2
-- kubectl
-- kind
-- 可访问的 OpenAI-compatible Chat/Embedding API
-- 可读的 kubeconfig，默认 context 为 `kind-incident-agent`
-
-直接在宿主机开发时还需要 Python `>=3.12,<3.13`、Node.js 24 和 npm。
-
-## 快速开始
-
-### 1. 创建演示集群
-
-已有 `kind-incident-agent` context 时可跳过创建：
+首次准备 Python 环境：
 
 ```bash
-kind create cluster --config infra/kind/cluster.yaml
-kubectl config use-context kind-incident-agent
-```
-
-部署健康基线和 RBAC：
-
-```bash
-kubectl apply -f infra/demo-app/baseline.yaml
-kubectl apply -f infra/rbac/reader.yaml
-kubectl apply -f infra/rbac/remediator.yaml
-```
-
-确认基线：
-
-```bash
-kubectl get deployment,pods,service,endpointslices -n agent-demo
-```
-
-### 2. 配置环境
-
-```bash
-cp .env.example .env
-```
-
-至少需要设置：
-
-- `POSTGRES_PASSWORD`
-- `PGVECTOR_URL` 中对应的 URL 编码密码
-- `DASHSCOPE_API_KEY`
-- `DASHSCOPE_BASE_URL`
-- 实际使用的 LLM 和 Embedding 模型
-
-不要提交 `.env`。仓库只保留不含真实凭据的 `.env.example`。
-
-### 3. 一键启动
-
-```bash
-chmod +x scripts/compose_up.sh scripts/compose_stop.sh
-./scripts/compose_up.sh
-```
-
-脚本会：
-
-- 自动读取当前 UID/GID、kubeconfig 和 Kubernetes context；
-- 创建或复用外部 PostgreSQL volume；
-- 构建前后端镜像；
-- 等待 PostgreSQL、FastAPI 和 Nginx 健康；
-- 仅在向量表为空时调用 Embedding API 建立 Runbook 索引。
-
-服务地址：
-
-| 服务 | 地址 |
-| --- | --- |
-| Web UI | <http://127.0.0.1:8080> |
-| 后端健康检查 | <http://127.0.0.1:8000/healthz> |
-| 后端就绪检查 | <http://127.0.0.1:8000/readyz> |
-| OpenAPI | <http://127.0.0.1:8000/docs> |
-
-远程服务器开发时，可通过 VS Code SSH 端口转发访问 `8080`。
-
-### 4. 安全停止
-
-```bash
-./scripts/compose_stop.sh
-```
-
-该脚本只停止容器，不删除 PostgreSQL volume。不要使用
-`docker compose down -v`。
-
-## Web 操作流程
-
-1. 输入 namespace、Service 名称和事故描述。
-2. 等待 Evidence 采集、Runbook 检索和 LLM 诊断完成。
-3. 检查诊断引用、结构化 Evidence、Runbook 和处置参数。
-4. 如果进入 `awaiting_approval`，填写审批人和审计备注。
-5. 拒绝方案，或明确确认后批准执行。
-6. 查看审批记录、执行前后快照、Patch、恢复验证和错误信息。
-
-前端会轮询事故状态，并在 URL/localStorage 中保存最近事故 ID，以便刷新页面或
-服务重启后继续查看。
-
-## API
-
-| Method | Path | 说明 |
-| --- | --- | --- |
-| `GET` | `/healthz` | 进程健康；不检查外部依赖 |
-| `GET` | `/readyz` | FastAPI lifespan 是否完成初始化 |
-| `POST` | `/api/v1/incidents` | 创建事故并运行 Graph，直到终态或审批中断 |
-| `GET` | `/api/v1/incidents/{incident_id}` | 读取 checkpoint 中的最新状态，不重新运行 Graph |
-| `POST` | `/api/v1/incidents/{incident_id}/approval` | 提交审批决定并恢复中断的 Graph |
-
-创建事故：
-
-```bash
-curl -sS -X POST http://127.0.0.1:8080/api/v1/incidents \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "namespace": "agent-demo",
-    "service_name": "order-service",
-    "description": "order-service readiness probe 异常，请基于证据诊断。"
-  }'
-```
-
-创建接口会同步运行工作流，真实 LLM 调用期间可能需要等待。HTTP `202` 表示事故已
-保存且工作流已运行到当前终态或人工审批中断，不代表修复已经执行。
-
-查询事故：
-
-```bash
-curl -sS \
-  http://127.0.0.1:8080/api/v1/incidents/INCIDENT_ID
-```
-
-审批请求必须使用创建/查询响应中的 `approval_request.approval_id`：
-
-```bash
-curl -sS -X POST \
-  http://127.0.0.1:8080/api/v1/incidents/INCIDENT_ID/approval \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "approval_id": "apr-0123456789abcdef",
-    "approved": true,
-    "approver": "operator@example.com",
-    "comment": "Reviewed evidence, target and rollback plan."
-  }'
-```
-
-重复决定、过期审批或不处于等待状态的事故返回 `409`。请求校验、服务错误和 Graph
-依赖错误均使用统一的结构化错误响应。
-
-## 故障演示
-
-以 readiness probe 错误为例：
-
-```bash
-kubectl apply -f infra/faults/04-readiness-error.yaml
-
-kubectl get deployment order-service \
-  -n agent-demo \
-  -o jsonpath='{.spec.template.spec.containers[0].readinessProbe.httpGet.path}{"\n"}'
-```
-
-预期路径为 `/wrong-health`。在 Web UI 创建事故并批准合法方案后，最终 phase 应为
-`verification_succeeded`，探针恢复为 `/healthz`。
-
-拒绝方案时，phase 应为 `approval_rejected`，且 `action_result` 和
-`verification_result` 都为空，Kubernetes 资源不会被执行器修改。
-
-演示结束后恢复基线：
-
-```bash
-kubectl apply -f infra/demo-app/baseline.yaml
-kubectl rollout status deployment/order-service \
-  -n agent-demo \
-  --timeout=180s
-```
-
-不要使用 `scripts/reset_demo.sh` 进行日常恢复；该脚本会重建演示 namespace。
-
-## 测试
-
-后端：
-
-```bash
-python -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e .
-pytest -q
+python -m pip install -e . pytest
 ```
 
-前端：
+首次使用时从 `.env.example` 复制 `.env`，填写 PostgreSQL、模型和 Embedding 配置。主要设置为 `PGVECTOR_URL`、`DASHSCOPE_API_KEY`、`DASHSCOPE_BASE_URL`、`LLM_MODEL`、`EMBEDDING_MODEL` 和 `KUBERNETES_CONTEXT`。实际默认值以 `backend/app/rag/settings.py` 为准。不要覆盖现有 `.env`。
+
+本项目演示脚本固定使用 `kind-incident-agent`，对应 kind 集群名 `incident-agent`。没有该集群时创建：
 
 ```bash
-cd frontend
-npm ci
-npm run lint
-npm run test
-npm run build
+kind create cluster --name incident-agent
 ```
 
-Compose 和 Shell：
+首次部署或明确需要重建演示应用时执行：
 
 ```bash
-bash -n scripts/compose_up.sh
-bash -n scripts/compose_stop.sh
-docker compose -f compose.yaml config --quiet
+bash scripts/demo_v02.sh deploy
+bash scripts/business_probe_up.sh
+bash scripts/compose_up.sh
 ```
 
-pytest 和 Vitest 默认使用 Fake，不应意外连接真实 Kubernetes、PostgreSQL、LLM 或
-Embedding。真实依赖仅用于显式的集成验收。
+`compose_up.sh` 会检查环境、创建或复用外部 PostgreSQL 卷、构建应用镜像，并在没有 Runbook 向量时建立索引。默认外部卷名为 `postgres_incident-agent-postgres`。已有数据卷会复用。
 
-## 持久化
+页面地址为服务器本机 `http://127.0.0.1:8080`，后端就绪检查为 `http://127.0.0.1:8000/readyz`。可使用 VS Code SSH 端口转发在开发机访问页面。
 
-- `incident_agent_app.incidents` 保存事故 ID、thread ID、请求和当前 phase。
-- LangGraph `checkpoints`、`checkpoint_blobs`、`checkpoint_writes` 保存完整 Graph State。
-- `langchain_pg_collection` 和 `langchain_pg_embedding` 保存 Runbook 向量。
-- `incident_id` 同时作为 LangGraph `thread_id`，GET 接口据此恢复状态。
-- FastAPI lifespan 持有 PostgresSaver，启动时执行幂等迁移和 checkpointer setup。
+## 服务配置与演示接口
 
-因此，后端进程或完整 Compose 重启后，待审批、已批准、已拒绝以及执行/验证结果仍可
-通过原事故 ID 查询。
+登记文件：`config/service-profiles/agent-demo.order-service.json`。当前关联 `agent-demo/order-service` Deployment 与同名 Service，应用版本为 `order-demo-v0.2.0`，镜像为 `k8s-incident-demo:0.2.0`。
 
-## 当前限制
+| 路径 | 用途 |
+| --- | --- |
+| `/livez` | 存活检查，不以模拟下游可用作为存活条件 |
+| `/readyz` | 就绪检查，依赖模拟下游可用 |
+| `/api/orders/demo-001` | 登记业务接口，预期 HTTP 200，订单 ID、确认状态和依赖状态匹配 |
 
-- 演示写入范围固定为 `agent-demo`，RBAC 清单针对 `order-service`。
-- Graph/API 使用同步调用链，创建和审批请求会等待外部调用完成。
-- `/readyz` 表示应用初始化完成，不持续探测 Kubernetes、PostgreSQL 或 LLM。
-- 当前没有用户认证、审批角色授权、限流、多租户和多集群管理。
-- 回滚补丁会被记录，但不会自动执行。
-- 根 Compose 使用 Linux host networking 访问 kind API，不面向 Docker Desktop/WSL2。
+服务配置记录 `owner` 与 `config_source`。现场修复后仍需同步修改配置仓库，避免下次发布覆盖现场修复；自动同步配置仓库未实现。修改登记配置或重建 Service 导致 ClusterIP 改变后，需要重新运行 `scripts/business_probe_up.sh` 更新检查器登记目标。
 
-这些约束是当前 `0.1.0` MVP 的明确边界，不应将此项目直接用于生产集群。
+## 检查与固定案例
+
+只读检查当前服务：
+
+```bash
+python -m scripts.check_service_profile
+python -m scripts.check_business_service --expect passed
+python -m scripts.check_diagnosis_policy --llm --expect-resource ready --expect-business passed
+```
+
+最后一条调用真实诊断模型；前提是当前 Demo 正常。`check_diagnosis_policy` 不执行处置计划。
+
+第五阶段程序回归：
+
+```bash
+python -m pytest backend/tests/fault_cases -q
+```
+
+本轮预期为 **16 passed**。十个案例的输入、预期和特殊断言在 `evals/cases/v02-stage5/catalog.json`；回归使用合成 Evidence 和固定模型响应，不能作为模型准确率数据。
+
+真实集群事实批测（会由操作者脚本修改 Demo）：
+
+```bash
+bash scripts/run_stage5_live.sh
+```
+
+预期七个 `PASS ... (live facts only)`，随后恢复正常并通过恢复后的事实检查。批测不调用诊断/规划模型，也不执行 Agent 审批流程。必要时单独恢复：
+
+```bash
+bash scripts/stage5_fault.sh reset
+```
+
+| 案例 ID | 输入方式 | 预期资源 / 业务 |
+| --- | --- | --- |
+| `normal` | 真实集群 / 回放 | ready / passed |
+| `selector_mismatch` | 真实集群 / 回放 | not_ready / unknown |
+| `readiness_path_error` | 真实集群 / 回放 | not_ready / passed |
+| `dependency_unavailable` | 真实集群 / 回放 | not_ready / unknown |
+| `api500` | 真实集群 / 回放 | ready / failed |
+| `wrong_content` | 真实集群 / 回放 | ready / failed |
+| `historical_recovered` | 合成回放 | ready / passed |
+| `evidence_missing` | 真实集群 / 回放 | ready / unknown |
+| `log_instruction` | 合成回放 | not_ready / unknown |
+| `changed_after_approval` | 合成回放 | not_ready / unknown；写入前冲突拦截 |
+
+探针路径错误的真实场景保留旧就绪副本服务流量，因此固定预期为资源未就绪、业务通过；不能强行要求两项状态一致。
+
+按需执行单个案例：
+
+```bash
+python -m scripts.run_fault_case --case changed_after_approval --source replay --mode regression
+python -m scripts.run_fault_case --case wrong_content --source replay --mode agent
+```
+
+`--mode facts` 只检查事实；`regression` 使用固定响应检验程序；`agent` 使用真实诊断及适用时的规划模型，但不执行真实审批和资源修改。`agent` 回放使用冻结 Runbook，不评估实时检索。模型调用可能产生费用。
+
+每次结果写到独立的 `evals/results/stage5/` 子目录，包含 `input.json`、`output-state.json`、`result.json`。记录来源、输入摘要、断言、实际耗时及模型报告的 Token；没有模型用量时不补造数字。`rule_precheck` 表示本地规则生成诊断，不能算作模型成功；该标识也不能证明上游检索没有产生 Embedding 用量。
+
+## 验收记录与后续
+
+本轮，维护者在阿里云 ECS 上反馈第五阶段全部通过，范围为固定程序回归、七个真实集群事实场景及批测后的恢复事实检查。原始运行记录位于执行环境的 `evals/results/stage5/`，未随源码公开提交。本次没有重新执行全部历史测试，也没有将合成审批回放当作真实受限身份验收。
+
+下一阶段是 **阶段 6：处置后资源与业务验证分开持久化，支持人工处理后重新检查，补齐页面负责人、处理结果和未验证范围**。随后是阶段 7 真实受限身份与越界验收，以及阶段 8 同批案例的规则/Agent 实测对比。当前不声明模型判断准确率、错误修复率或业务恢复误报率。
+
+提交与推送流程见 [docs/GIT_PUBLISH.md](docs/GIT_PUBLISH.md)。

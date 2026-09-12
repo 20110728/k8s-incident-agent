@@ -1,3 +1,4 @@
+from backend.tests.service_profiles.fixtures import with_profile
 import pytest
 
 from backend.app.agent.approval import (
@@ -135,6 +136,7 @@ def approved_state() -> dict:
         "trace": [],
     }
 
+    with_profile(state)
     approval_request = build_approval_request(
         state
     )

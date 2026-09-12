@@ -5,6 +5,7 @@ from backend.app.agent.state import IncidentState
 
 
 RETRIEVAL_EVIDENCE_TYPES = {
+    "BusinessCheck",
     "Service",
     "PodSelection",
     "EndpointSlice",
@@ -34,7 +35,7 @@ def build_retrieval_query(
         ),
     ]
 
-    for item in state.get("evidence", []):
+    for item in sorted(state.get("evidence", []), key=lambda e: e.get("resource_type") != "BusinessCheck"):
         resource_type = item.get("resource_type")
 
         if resource_type not in RETRIEVAL_EVIDENCE_TYPES:

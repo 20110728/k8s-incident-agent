@@ -1,3 +1,6 @@
+# 证据适配层：将采集结果转换为带来源、资源关联和唯一编号的 Evidence。
+# 后续诊断引用这些编号；业务检查追加在已有资源证据之后。
+
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -52,6 +55,7 @@ def normalize_evidence(
         resource_type: str,
         resource_name: str,
         data: Any,
+        source: str = "kubernetes_api",
     ) -> None:
         nonlocal sequence
         sequence += 1
@@ -64,7 +68,7 @@ def normalize_evidence(
                 "evidence_id": (
                     f"ev-{short_id}-{sequence:03d}"
                 ),
-                "source": "kubernetes_api",
+                "source": source,
                 "resource_type": resource_type,
                 "resource_name": resource_name,
                 "collected_at": collected_at,
@@ -203,6 +207,15 @@ def normalize_evidence(
             resource_type="Node",
             resource_name=node_name,
             data=node,
+        )
+
+    # Append to preserve existing Kubernetes Evidence IDs.
+    for check in bundle.get("business_checks", []):
+        add_evidence(
+            resource_type="BusinessCheck",
+            resource_name=f"{service_name}/{check.get('check_id') or 'not-run'}",
+            data=check,
+            source="cluster_http_probe" if check.get("request_id") else "business_check_policy",
         )
 
     return evidence

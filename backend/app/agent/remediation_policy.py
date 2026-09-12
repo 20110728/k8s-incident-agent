@@ -1,3 +1,12 @@
+# 处置策略边界：由实际证据与版本匹配的配置决定可建议动作，并校验计划参数。
+# 写操作仅限登记的 selector 和 readiness 修正，不能用放宽探针掩盖业务失败。
+
+from pydantic import ValidationError
+from backend.app.agent.schemas import Diagnosis
+from backend.app.agent.diagnosis_policy import (
+    diagnostic_facts, validate_diagnosis_assessment, InvalidDiagnosisAssessment,
+)
+
 import re
 from typing import Any
 
@@ -6,6 +15,9 @@ from backend.app.agent.schemas import (
     RemediationPlan,
 )
 from backend.app.agent.state import IncidentState
+from backend.app.service_profiles.registry import (
+    ProfileUnavailable, matched_profile, validate_profile_action,
+)
 
 SAFE_NAMESPACE = "agent-demo"
 
@@ -25,6 +37,8 @@ EXECUTABLE_REMEDIATION_ACTIONS = frozenset(
 )
 
 ALLOWED_ACTIONS_BY_FAULT_CATEGORY = {
+    "application_error": {"manual_investigation"},
+    "dependency_error": {"manual_investigation"},
     "crash_loop_backoff": {
         "manual_investigation",
     },
@@ -99,146 +113,35 @@ def _find_evidence(
     ]
 
 
-def _contains_value(
-    value: Any,
-    expected: Any,
-) -> bool:
-    if isinstance(value, dict):
-        return any(
-            _contains_value(child, expected)
-            for child in value.values()
-        )
-
-    if isinstance(value, list):
-        return any(
-            _contains_value(child, expected)
-            for child in value
-        )
-
-    return value == expected
-
-def _has_grounded_readiness_candidate(
-    state: IncidentState,
-) -> bool:
-    for item in state.get("evidence", []):
-        if item.get("resource_type") != (
-            "Deployment"
-        ):
+def _has_grounded_readiness_candidate(state: IncidentState) -> bool:
+    try:
+        profile = matched_profile(state)
+    except ProfileUnavailable:
+        return False
+    deployments = _find_evidence(state, resource_type="Deployment",
+                                 resource_name=profile.deployment_name)
+    for container in deployments[0]["data"].get("containers", []):
+        if container.get("name") != profile.container_name:
             continue
-
-        deployment_data = item.get(
-            "data",
-            {},
-        )
-
-        for container in deployment_data.get(
-            "containers",
-            [],
-        ):
-            readiness_probe = (
-                container.get("readiness_probe")
-                or {}
-            )
-            liveness_probe = (
-                container.get("liveness_probe")
-                or {}
-            )
-
-            current_path = readiness_probe.get(
-                "path"
-            )
-            current_port = readiness_probe.get(
-                "port"
-            )
-
-            candidate_path = liveness_probe.get(
-                "path"
-            )
-            candidate_port = liveness_probe.get(
-                "port"
-            )
-
-            if (
-                candidate_path is None
-                or candidate_port is None
-            ):
-                continue
-
-            if (
-                candidate_path != current_path
-                or candidate_port != current_port
-            ):
-                return True
-
+        probe = container.get("readiness_probe") or {}
+        expected = profile.readiness_probe
+        # This executor changes path/port only. Scheme changes require manual work.
+        return bool(probe.get("path") and probe.get("port") is not None
+                    and (probe.get("scheme") or "HTTP") == expected.scheme
+                    and (probe.get("path"), probe.get("port")) != (expected.path, expected.port))
     return False
 
 
-def _has_grounded_selector_candidate(
-    state: IncidentState,
-) -> bool:
-    request = state.get("request", {})
-    service_name = request.get("service_name")
-
-    service_evidence = _find_evidence(
-        state,
-        resource_type="Service",
-        resource_name=str(service_name),
-    )
-
-    if not service_evidence:
+def _has_grounded_selector_candidate(state: IncidentState) -> bool:
+    try:
+        profile = matched_profile(state)
+    except ProfileUnavailable:
         return False
-
-    current_selector = service_evidence[0].get(
-        "data",
-        {},
-    ).get("selector", {})
-
-    if not isinstance(
-        current_selector,
-        dict,
-    ):
-        return False
-
-    if not current_selector:
-        return False
-
-    candidate_labels: list[dict[str, str]] = []
-
-    for item in state.get("evidence", []):
-        data = item.get("data", {})
-
-        if item.get("resource_type") == "PodStatus":
-            if data.get("ready") is True:
-                labels = data.get("labels", {})
-
-                if isinstance(labels, dict):
-                    candidate_labels.append(labels)
-
-        if item.get("resource_type") == "Deployment":
-            labels = data.get(
-                "template_labels",
-                {},
-            )
-
-            if isinstance(labels, dict):
-                candidate_labels.append(labels)
-
-    for labels in candidate_labels:
-        if not all(
-            key in labels
-            for key in current_selector
-        ):
-            continue
-
-        candidate_selector = {
-            key: labels[key]
-            for key in current_selector
-        }
-
-        if candidate_selector != current_selector:
-            return True
-
-    return False
+    services = _find_evidence(state, resource_type="Service",
+                             resource_name=profile.service_name)
+    return (len(services) == 1
+            and isinstance(services[0].get("data", {}).get("selector"), dict)
+            and services[0]["data"]["selector"] != profile.expected_selector)
 
 
 def get_allowed_remediation_actions(
@@ -274,6 +177,23 @@ def get_allowed_remediation_actions(
                 "patch_service_selector"
             )
 
+    if actions & EXECUTABLE_REMEDIATION_ACTIONS:
+        try:
+            parsed = Diagnosis.model_validate(diagnosis)
+            validate_diagnosis_assessment(parsed, state)
+        except (ValueError, ValidationError):
+            actions -= EXECUTABLE_REMEDIATION_ACTIONS
+        else:
+            facts = diagnostic_facts(state)
+            # A failed interface assertion or current runtime fault is contradictory
+            # evidence: investigate it before changing readiness or traffic routing.
+            if (not facts['configuration_evidence_complete']
+                    or facts['business_status'] == 'failed' or facts['current_runtime_faults']):
+                actions -= EXECUTABLE_REMEDIATION_ACTIONS
+            if not any(h.status == 'supported'
+                       and set(facts['configuration_evidence_ids']) <= set(h.evidence_ids)
+                       for h in parsed.assessment.root_cause_hypotheses):
+                actions -= EXECUTABLE_REMEDIATION_ACTIONS
     return actions
 
 def _validate_references(
@@ -605,36 +525,6 @@ def _validate_readiness_patch(
             "does not change current configuration"
         )
 
-    evidence_data = [
-        item.get("data", {})
-        for item in state.get("evidence", [])
-    ]
-
-    if (
-        parameters.proposed_probe_path
-        != parameters.current_probe_path
-        and not _contains_value(
-            evidence_data,
-            parameters.proposed_probe_path,
-        )
-    ):
-        raise InvalidRemediationPlan(
-            "proposed probe path is not grounded "
-            "in collected evidence"
-        )
-
-    if (
-        parameters.proposed_probe_port
-        != parameters.current_probe_port
-        and not _contains_value(
-            evidence_data,
-            parameters.proposed_probe_port,
-        )
-    ):
-        raise InvalidRemediationPlan(
-            "proposed probe port is not grounded "
-            "in collected evidence"
-        )
 
 
 def _validate_selector_patch(
@@ -685,35 +575,6 @@ def _validate_selector_patch(
             "current selector does not match evidence"
         )
 
-    candidate_labels: list[dict[str, str]] = []
-
-    for item in state.get("evidence", []):
-        data = item.get("data", {})
-
-        if item.get("resource_type") == "PodStatus":
-            if data.get("ready") is True:
-                candidate_labels.append(
-                    data.get("labels", {})
-                )
-
-        if item.get("resource_type") == "Deployment":
-            candidate_labels.append(
-                data.get("template_labels", {})
-            )
-
-    selector_matches = any(
-        all(
-            labels.get(key) == value
-            for key, value in proposed_selector.items()
-        )
-        for labels in candidate_labels
-    )
-
-    if not selector_matches:
-        raise InvalidRemediationPlan(
-            "proposed selector does not match "
-            "any evidenced workload labels"
-        )
 
 
 def validate_remediation_plan(
@@ -752,6 +613,16 @@ def validate_remediation_plan(
     )
     _validate_text_has_no_commands(plan)
     _validate_action_metadata(plan)
+    if plan.action in EXECUTABLE_REMEDIATION_ACTIONS:
+        facts = diagnostic_facts(state)
+        if not set(facts['configuration_evidence_ids']) <= set(plan.evidence_ids):
+            raise InvalidRemediationPlan("write plan must cite Service and registered Deployment configuration")
+        if not plan.runbook_ids:
+            raise InvalidRemediationPlan("write plan requires a retrieved runbook reference")
+        try:
+            validate_profile_action(matched_profile(state), plan)
+        except ProfileUnavailable as exc:
+            raise InvalidRemediationPlan(str(exc)) from exc
 
     if plan.action == "manual_investigation":
         _validate_manual_investigation(plan)

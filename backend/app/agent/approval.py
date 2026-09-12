@@ -1,3 +1,6 @@
+# 审批绑定：将事件、计划及可用的配置、诊断、证据快照绑定到审批标识。
+# 此处校验审批记录的一致性；多人场景的登录认证和审批角色授权仍需另行实现。
+
 from __future__ import annotations
 
 import hashlib
@@ -61,10 +64,16 @@ def build_approval_request(state: IncidentState) -> ApprovalRequest:
             f"approval target namespace must be {SAFE_NAMESPACE}"
         )
 
+    # 审批绑定的是具体快照；计划、配置或证据变化后必须重新计算审批请求。
     fingerprint_payload = {
         "incident_id": incident_id,
         "remediation_plan": plan.model_dump(mode="json"),
     }
+    if state.get("service_profile") is not None:
+        fingerprint_payload["service_profile"] = state["service_profile"]
+    if (state.get("diagnosis") or {}).get("assessment") is not None:
+        fingerprint_payload["diagnosis"] = state["diagnosis"]
+        fingerprint_payload["evidence"] = state.get("evidence", [])
     canonical_payload = json.dumps(
         fingerprint_payload,
         ensure_ascii=False,

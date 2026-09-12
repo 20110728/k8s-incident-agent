@@ -42,3 +42,6 @@ dist/
 /day*-stage*-audit.txt
 /day*-stage*-contract.txt
 /frontend-layout-current.txt
+
+# Local fault-case evidence and results
+/evals/results/

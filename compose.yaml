@@ -63,7 +63,12 @@ services:
       KUBECONFIG: /tmp/kubeconfig
       TMPDIR: /tmp
       XDG_CACHE_HOME: /tmp/.cache
+      INCIDENT_AGENT_SERVICE_PROFILE_DIR: /app/config/service-profiles
     volumes:
+      - type: bind
+        source: ./config/service-profiles
+        target: /app/config/service-profiles
+        read_only: true
       - type: bind
         source: ${KUBECONFIG_PATH:?Set KUBECONFIG_PATH}
         target: /tmp/kubeconfig

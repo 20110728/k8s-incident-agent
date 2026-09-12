@@ -1,3 +1,5 @@
+from backend.app.agent.diagnosis_policy import diagnostic_facts
+
 import json
 import re
 from typing import Any
@@ -61,7 +63,9 @@ def build_diagnosis_context(
 
     evidence_blocks: list[dict[str, Any]] = []
 
-    for item in evidence:
+    # Put business results before potentially long event/log text.
+    ordered_evidence = sorted(evidence, key=lambda item: item.get("resource_type") != "BusinessCheck")
+    for item in ordered_evidence:
         resource_type = item.get(
             "resource_type",
             "Unknown",
@@ -72,6 +76,9 @@ def build_diagnosis_context(
             if resource_type == "PodLogs"
             else MAX_EVIDENCE_CHARACTERS
         )
+
+        if resource_type == "BusinessCheck":
+            limit = 4000
 
         evidence_blocks.append(
             {
@@ -105,6 +112,8 @@ def build_diagnosis_context(
         )
 
     context = {
+        "policy_facts": diagnostic_facts(state),
+        "service_profile": state.get("service_profile"),
         "incident": {
             "namespace": request.get("namespace"),
             "service_name": request.get(

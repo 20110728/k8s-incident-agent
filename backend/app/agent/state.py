@@ -1,3 +1,6 @@
+# LangGraph 共享状态契约：节点、审批恢复和持久化共同使用这些字段。
+# errors 与 trace 使用追加合并；其余字段由后续节点更新。
+
 from operator import add
 from typing import Annotated, Any, TypedDict
 
@@ -22,12 +25,15 @@ class IncidentState(TypedDict, total=False):
     # 证据采集
     collection_plan: list[str]
     evidence: list[dict[str, Any]]
+    service_profile: dict[str, Any] | None
 
     # RAG
     retrieval_query: str
     retrieved_runbooks: list[dict[str, Any]]
 
     # 诊断
+    # 用于审计的模型原文结构；页面正式诊断读取下方 diagnosis。
+    diagnosis_model_output: dict[str, Any] | None
     diagnosis: dict[str, Any] | None
     llm_model: str
     llm_usage: dict[str, int]

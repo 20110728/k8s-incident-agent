@@ -76,7 +76,7 @@ function DiagnosisPanel({
           </div>
 
           <div className="diagnosis-section">
-            <h3>Root cause</h3>
+            <h3>诊断摘要</h3>
             <p>{diagnosis.root_cause}</p>
           </div>
 
@@ -84,6 +84,29 @@ function DiagnosisPanel({
             <h3>Reasoning summary</h3>
             <p>{diagnosis.reasoning_summary}</p>
           </div>
+
+          {diagnosis.assessment && (
+            <div className="diagnosis-section">
+              <h3>症状与根因假设</h3>
+              <p>问题领域：{formatLabel(diagnosis.assessment.problem_domain)}</p>
+              <p>本次采样资源状态：{formatLabel(diagnosis.assessment.resource_status)}；
+                登记业务检查：{formatLabel(diagnosis.assessment.business_status)}。</p>
+              <p>以上是诊断时的证据，不代表处置后的恢复结果。</p>
+              <ul>{diagnosis.assessment.symptoms.map((item, i) => (
+                <li key={i}>症状：{item.summary}（{item.evidence_ids.join(', ')}）</li>
+              ))}</ul>
+              <ul>{diagnosis.assessment.root_cause_hypotheses.map((item, i) => (
+                <li key={i}>{item.status === 'suspected' ? '待验证假设' : '证据支持'}：
+                  {item.summary}（{item.evidence_ids.join(', ')}）</li>
+              ))}</ul>
+              <h3>缺失证据</h3>
+              <ul>{diagnosis.assessment.missing_evidence.map((text, i) => <li key={i}>{text}</li>)}</ul>
+              <h3>下一步调查</h3>
+              <ol>{diagnosis.assessment.next_investigation.map((text, i) => <li key={i}>{text}</li>)}</ol>
+              <h3>未验证范围</h3>
+              <ul>{diagnosis.assessment.unverified_scope.map((text, i) => <li key={i}>{text}</li>)}</ul>
+            </div>
+          )}
 
           <div className="diagnosis-section">
             <h3>Evidence citations</h3>

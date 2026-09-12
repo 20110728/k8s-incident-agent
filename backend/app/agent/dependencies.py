@@ -1,3 +1,9 @@
+# 生产依赖装配：将 Kubernetes、服务配置、业务检查、RAG 和模型接入工作流。
+# 业务检查采集异常以证据缺失保留，不能据此宣告业务正常。
+
+from backend.app.business_checks.collector import collect_business_checks
+from backend.app.service_profiles.registry import collect_profile
+
 from backend.app.agent.collector_adapter import (
     KubernetesCollectorAdapter,
 )
@@ -39,11 +45,21 @@ def build_kubernetes_collector() -> KubernetesCollectorAdapter:
         namespace: str,
         service_name: str,
     ):
-        return collect_service_evidence(
+        bundle = collect_service_evidence(
             clients=clients,
             namespace=namespace,
             service_name=service_name,
-        )
+        ).model_dump(mode="json")
+        bundle["service_profile"] = collect_profile(clients, bundle)
+        bundle["business_checks"] = collect_business_checks(clients, bundle)
+        for check in bundle["business_checks"]:
+            if check["status"] in {"unknown", "skipped"}:
+                bundle["errors"].append({
+                    "operation": "business_check", "resource_kind": "Service",
+                    "resource_name": service_name, "message": check["error_code"],
+                    "status_code": None,
+                })
+        return bundle
 
     return KubernetesCollectorAdapter(collect_fn)
 

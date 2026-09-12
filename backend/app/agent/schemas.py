@@ -10,6 +10,8 @@ FaultCategory = Literal[
     "oom_killed",
     "readiness_probe_error",
     "service_selector_mismatch",
+    "application_error",
+    "dependency_error",
     "no_fault_detected",
     "unknown",
 ]
@@ -58,8 +60,37 @@ class EvidenceItem(BaseModel):
     error: str | None = None
 
 
+class DiagnosticFinding(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    summary: str = Field(min_length=1, max_length=1200)
+    evidence_ids: list[str] = Field(min_length=1, max_length=20)
+
+
+class RootCauseHypothesis(DiagnosticFinding):
+    status: Literal["suspected", "supported"]
+
+
+class DiagnosticAssessment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    schema_version: Literal["v2"]
+    problem_domain: Literal[
+        "deployment_configuration", "application_runtime", "dependency",
+        "insufficient_evidence", "none",
+    ]
+    symptoms: list[DiagnosticFinding] = Field(max_length=10)
+    root_cause_hypotheses: list[RootCauseHypothesis] = Field(max_length=5)
+    missing_evidence: list[str] = Field(max_length=10)
+    next_investigation: list[str] = Field(max_length=5)
+    resource_status: Literal["ready", "not_ready", "unknown"]
+    business_status: Literal["passed", "failed", "unknown"]
+    unverified_scope: list[str] = Field(min_length=1, max_length=10)
+
+
 class Diagnosis(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+    # Legacy checkpoints remain readable; new LLM output requires assessment.
+    assessment: DiagnosticAssessment | None = None
 
     fault_category: FaultCategory = Field(
         description="故障类别，只能使用预定义枚举值",
@@ -67,8 +98,8 @@ class Diagnosis(BaseModel):
     root_cause: str = Field(
         min_length=1,
         description=(
-            "非空的根因结论。"
-            "如果未检测到故障，必须明确说明现有证据表明服务正常；"
+            "非空的结论摘要，明确区分已观察症状与待验证根因。"
+            "如果未检测到故障，只能说明已检查范围内未见异常；"
             "如果证据不足，必须明确说明无法确定根因以及缺少的证据。"
         ),
     )
@@ -90,6 +121,10 @@ class Diagnosis(BaseModel):
             "非空的诊断依据摘要，必须说明关键证据如何支持诊断结论。"
         ),
     )
+
+
+class CurrentDiagnosis(Diagnosis):
+    assessment: DiagnosticAssessment
 
 
 RemediationActionName = Literal[
@@ -174,7 +209,7 @@ class RemediationPlan(BaseModel):
         min_length=1,
     )
     runbook_ids: list[str] = Field(
-        min_length=1,
+        description="人工调查可为空；写操作必须引用检索到的Runbook",
     )
 
     requires_approval: bool

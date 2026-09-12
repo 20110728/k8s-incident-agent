@@ -1,0 +1,52 @@
+{
+  "schema_version": "v1",
+  "profile_id": "agent-demo.order-service",
+  "revision": "2",
+  "namespace": "agent-demo",
+  "service_name": "order-service",
+  "deployment_name": "order-service",
+  "container_name": "order-service",
+  "owner": {
+    "team": "demo-maintainer",
+    "contact": "项目维护者（Demo 本地责任人）"
+  },
+  "config_source": "infra/demo-app/baseline.yaml",
+  "application": {
+    "version": "order-demo-v0.2.0",
+    "images": {
+      "order-service": "k8s-incident-demo:0.2.0"
+    }
+  },
+  "expected_selector": {
+    "app": "order-service"
+  },
+  "readiness_probe": {
+    "path": "/readyz",
+    "port": "http",
+    "scheme": "HTTP"
+  },
+  "liveness_probe": {
+    "path": "/livez",
+    "port": "http",
+    "scheme": "HTTP"
+  },
+  "business_checks": [
+    {
+      "check_id": "get-demo-order",
+      "method": "GET",
+      "path": "/api/orders/demo-001",
+      "port": 80,
+      "scheme": "HTTP",
+      "expected_status": 200,
+      "expected_json_subset": {
+        "order_id": "demo-001",
+        "status": "confirmed",
+        "dependency_status": "available"
+      },
+      "timeout_seconds": 3,
+      "max_response_bytes": 16384,
+      "follow_redirects": false,
+      "read_only": true
+    }
+  ]
+}

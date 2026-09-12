@@ -1,3 +1,6 @@
+# 处置后资源验证：检查 Kubernetes 配置、Pod 就绪和 Service 端点等资源条件。
+# 当前模块尚未执行处置后的业务接口验证，资源验证通过不能解释为业务恢复。
+
 from __future__ import annotations
 
 import time

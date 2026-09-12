@@ -251,6 +251,8 @@ def time_source():
 def test_executor_dispatches_service_selector(
     monkeypatch,
 ):
+    monkeypatch.setattr(executor_module, "revalidate_live_profile",
+                        lambda state, clients, plan: {"resource_version": "rv-1"})
     plan = selector_plan()
     authorization = authorization_for(
         plan
@@ -306,6 +308,8 @@ def test_executor_dispatches_service_selector(
 def test_executor_dispatches_readiness_probe(
     monkeypatch,
 ):
+    monkeypatch.setattr(executor_module, "revalidate_live_profile",
+                        lambda state, clients, plan: {"resource_version": "rv-1"})
     plan = readiness_plan()
     authorization = authorization_for(
         plan
@@ -345,6 +349,7 @@ def test_executor_dispatches_readiness_probe(
                 "order-service"
             ),
             "container_name": "order-service",
+            "expected_resource_version": "rv-1",
             "expected_path": (
                 "/wrong-health"
             ),
@@ -395,6 +400,8 @@ def test_executor_returns_previous_result(
 def test_executor_converts_tool_exception(
     monkeypatch,
 ):
+    monkeypatch.setattr(executor_module, "revalidate_live_profile",
+                        lambda state, clients, plan: {"resource_version": "rv-1"})
     authorization = authorization_for(
         selector_plan()
     )

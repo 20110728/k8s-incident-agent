@@ -1,3 +1,4 @@
+from backend.tests.service_profiles.fixtures import with_bundle_profile
 from uuid import uuid4
 
 import pytest
@@ -22,7 +23,7 @@ from backend.tests.agent.fakes import (
 
 
 def selector_mismatch_bundle() -> dict:
-    return {
+    return with_bundle_profile({
         "namespace": "agent-demo",
         "service_name": "order-service",
         "service": {
@@ -63,7 +64,7 @@ def selector_mismatch_bundle() -> dict:
         "deployments": {},
         "nodes": {},
         "errors": [],
-    }
+    })
 
 
 def selector_runbooks() -> list[dict]:

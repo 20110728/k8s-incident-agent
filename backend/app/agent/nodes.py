@@ -1,4 +1,15 @@
+# 工作流节点：读取 IncidentState，返回本节点产生的状态增量。
+# 诊断先经过本地证据门槛，再校验模型结构与引用；失败不会进入自动写操作。
+
+from backend.app.agent.diagnosis_report import build_controlled_report
+
 import re
+import json
+
+from backend.app.agent.diagnosis_policy import (
+    InvalidDiagnosisAssessment, validate_diagnosis_assessment,
+    diagnostic_facts, can_report_insufficient_evidence, insufficient_evidence_diagnosis,
+)
 
 from datetime import UTC, datetime
 from typing import Any
@@ -91,6 +102,22 @@ def _normalize_reference_ids(values: list[str]) -> list[str]:
             normalized.append(cleaned)
 
     return normalized
+
+
+def reconcile_declared_evidence(diagnosis: Diagnosis, state: IncidentState) -> tuple[Diagnosis, list[str]]:
+    """Index exact existing references already written by the model; never invent support."""
+    available = {item["evidence_id"] for item in state.get("evidence", [])
+                 if item.get("evidence_id") and not item.get("error")}
+    mentioned = set(EVIDENCE_ID_PATTERN.findall(
+        json.dumps(diagnosis.model_dump(), ensure_ascii=False)))
+    missing = mentioned - set(diagnosis.evidence_ids)
+    unknown = missing - available
+    if unknown:
+        raise InvalidDiagnosisReference(
+            f"unknown evidence IDs mentioned in diagnosis: {sorted(unknown)!r}")
+    added = sorted(missing)
+    return diagnosis.model_copy(update={"evidence_ids": [*diagnosis.evidence_ids, *added]}), added
+
 
 def utc_now() -> str:
     return datetime.now(UTC).isoformat()
@@ -286,6 +313,7 @@ def make_collect_evidence_node(
                     else "evidence_collected"
                 ),
                 "evidence": evidence,
+                "service_profile": bundle.get("service_profile"),
                 "error_count": (
                     state.get("error_count", 0)
                     + len(normalized_errors)
@@ -337,31 +365,6 @@ def make_retrieve_runbooks_node(
                 query=query,
                 k=3,
             )
-
-            if not runbooks:
-                return {
-                    "phase": "runbook_retrieval_failed",
-                    "retrieval_query": query,
-                    "error_count": (
-                        state.get("error_count", 0) + 1
-                    ),
-                    "errors": [
-                        {
-                            "stage": "retrieve_runbooks",
-                            "code": "NO_RUNBOOK_FOUND",
-                            "message": (
-                                "retriever returned no runbooks"
-                            ),
-                        }
-                    ],
-                    "trace": [
-                        trace_event(
-                            "retrieve_runbooks",
-                            "failed",
-                            "no runbook was retrieved",
-                        )
-                    ],
-                }
 
             return {
                 "phase": "runbooks_retrieved",
@@ -447,9 +450,7 @@ def validate_diagnosis_references(
 
     mentioned_evidence_ids = set(
         EVIDENCE_ID_PATTERN.findall(
-            diagnosis.root_cause
-            + "\n"
-            + diagnosis.reasoning_summary
+            json.dumps(diagnosis.model_dump(), ensure_ascii=False)
         )
     )
 
@@ -467,7 +468,7 @@ def validate_diagnosis_references(
 
     if (
         diagnosis.fault_category
-        not in {"unknown", "no_fault_detected"}
+        not in {"unknown", "no_fault_detected", "application_error", "dependency_error"}
         and not diagnosis.runbook_ids
     ):
         raise InvalidDiagnosisReference(
@@ -483,8 +484,29 @@ def make_diagnose_incident_node(
     ) -> dict[str, Any]:
         accumulated_usage: dict[str, int] = {}
         retry_count = 0
+        last_model_name: str | None = None
 
         try:
+            # Decide from collected facts before any generative diagnosis. The
+            # generated report is independently reference- and semantic-validated.
+            if can_report_insufficient_evidence(diagnostic_facts(state)):
+                local_diagnosis = insufficient_evidence_diagnosis(state)
+                validate_diagnosis_references(diagnosis=local_diagnosis, state=state)
+                validate_diagnosis_assessment(local_diagnosis, state)
+                return {
+                    "phase": "diagnosis_completed",
+                    "diagnosis": local_diagnosis.model_dump(),
+                    "diagnosis_model_output": None,
+                    "llm_model": None,
+                    "llm_usage": {},
+                    "diagnosis_retry_count": 0,
+                    "trace": [trace_event(
+                        "diagnosis_policy_precheck", "completed",
+                        "rule_precheck: insufficient evidence; diagnosis model not called; "
+                        "resource_status=not_ready; business_status=unknown; no write actions",
+                    )],
+                }
+
             validation_feedback: str | None = None
 
             # 首次调用加一次校验重试，
@@ -501,6 +523,8 @@ def make_diagnose_incident_node(
                 result = diagnoser.diagnose(
                     call_state
                 )
+
+                last_model_name = result.model_name
 
                 for key, value in (
                     result.usage.items()
@@ -534,12 +558,23 @@ def make_diagnose_incident_node(
                         )
                     )
 
+                    diagnosis_normalized, indexed_references = reconcile_declared_evidence(
+                        diagnosis_normalized, state)
+
                     validate_diagnosis_references(
                         diagnosis=diagnosis_normalized,
                         state=state,
                     )
+                    validate_diagnosis_assessment(diagnosis_normalized, state)
+                    # 先保留原始模型结构；正式报告生成后仍再次通过引用与事实校验。
+                    model_output = result.diagnosis.model_dump()
+                    report = build_controlled_report(diagnosis_normalized, state)
+                    controlled_report = report is not diagnosis_normalized
+                    validate_diagnosis_references(diagnosis=report, state=state)
+                    validate_diagnosis_assessment(report, state)
+                    diagnosis_normalized = report
 
-                except InvalidDiagnosisReference as exc:
+                except (InvalidDiagnosisReference, InvalidDiagnosisAssessment) as exc:
                     if attempt_index == 0:
                         validation_feedback = str(exc)
                         continue
@@ -556,11 +591,18 @@ def make_diagnose_incident_node(
                         "after one validation retry"
                     )
 
+                if indexed_references:
+                    trace_message += (
+                        "; indexed existing Evidence references omitted from evidence_ids: "
+                        + ", ".join(indexed_references)
+                    )
+
                 return {
                     "phase": "diagnosis_completed",
                     "diagnosis": (
                         diagnosis_normalized.model_dump()
                     ),
+                    "diagnosis_model_output": model_output,
                     "llm_model": result.model_name,
                     "llm_usage": accumulated_usage,
                     "diagnosis_retry_count": (
@@ -571,7 +613,11 @@ def make_diagnose_incident_node(
                             "diagnose_incident",
                             "completed",
                             trace_message,
-                        )
+                        ),
+                        *([trace_event("diagnosis_controlled_report", "completed",
+                            "model classification validated; narrative generated from current evidence; "
+                            "original model output retained for audit")]
+                          if controlled_report else []),
                     ],
                 }
 
@@ -580,9 +626,11 @@ def make_diagnose_incident_node(
                 "without a result"
             )
 
-        except InvalidDiagnosisReference as exc:
+        except (InvalidDiagnosisReference, InvalidDiagnosisAssessment) as exc:
             return {
                 "phase": "diagnosis_failed",
+                "llm_model": last_model_name,
+                "llm_usage": accumulated_usage,
                 "diagnosis_retry_count": (
                     retry_count
                 ),
@@ -593,7 +641,9 @@ def make_diagnose_incident_node(
                     {
                         "stage": "diagnose_incident",
                         "code": (
-                            "INVALID_DIAGNOSIS_REFERENCE"
+                            "INVALID_DIAGNOSIS_ASSESSMENT"
+                            if isinstance(exc, InvalidDiagnosisAssessment)
+                            else "INVALID_DIAGNOSIS_REFERENCE"
                         ),
                         "message": str(exc),
                     }
@@ -613,6 +663,8 @@ def make_diagnose_incident_node(
         except Exception as exc:
             return {
                 "phase": "diagnosis_failed",
+                "llm_model": last_model_name,
+                "llm_usage": accumulated_usage,
                 "diagnosis_retry_count": (
                     retry_count
                 ),

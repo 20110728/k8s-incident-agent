@@ -103,6 +103,7 @@ def build_remediation_context(
     )
 
     context = {
+        "service_profile": state.get("service_profile"),
         "incident": {
             "namespace": request.get("namespace"),
             "service_name": request.get(

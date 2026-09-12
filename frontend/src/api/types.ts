@@ -19,6 +19,8 @@ export type FaultCategory =
   | 'oom_killed'
   | 'readiness_probe_error'
   | 'service_selector_mismatch'
+  | 'application_error'
+  | 'dependency_error'
   | 'no_fault_detected'
   | 'unknown'
 
@@ -107,7 +109,20 @@ export interface RetrievedRunbook {
   score: number
 }
 
+export interface DiagnosticAssessment {
+  schema_version: 'v2'
+  problem_domain: 'deployment_configuration' | 'application_runtime' | 'dependency' | 'insufficient_evidence' | 'none'
+  symptoms: { summary: string; evidence_ids: string[] }[]
+  root_cause_hypotheses: { summary: string; evidence_ids: string[]; status: 'suspected' | 'supported' }[]
+  missing_evidence: string[]
+  next_investigation: string[]
+  resource_status: 'ready' | 'not_ready' | 'unknown'
+  business_status: 'passed' | 'failed' | 'unknown'
+  unverified_scope: string[]
+}
+
 export interface Diagnosis {
+  assessment?: DiagnosticAssessment | null
   fault_category: FaultCategory
   root_cause: string
   evidence_ids: string[]
