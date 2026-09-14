@@ -1,3 +1,4 @@
+from backend.app.llm.debug_capture import record_response
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -68,6 +69,8 @@ class ChatDiagnosisService:
                 ),
             ]
         )
+
+        record_response(response)
 
         parsing_error = response.get(
             "parsing_error"

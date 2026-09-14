@@ -640,3 +640,81 @@ def validate_remediation_plan(
         )
 
     return plan
+
+
+def prepare_remediation_plan(
+    *,
+    plan: RemediationPlan,
+    state: IncidentState,
+) -> tuple[RemediationPlan, list[str]]:
+    """补齐真实配置引用，再执行完整校验。
+
+    仅补齐当前事件中已存在、且诊断已声明的配置证据。
+    不修改动作、目标、修复值或 Runbook 引用。
+    """
+    # 先检查模型原有引用，不能通过补齐掩盖虚构或非法引用。
+    _validate_references(plan=plan, state=state)
+
+    added_ids: list[str] = []
+
+    if plan.action in EXECUTABLE_REMEDIATION_ACTIONS:
+        if plan.action not in get_allowed_remediation_actions(state):
+            raise InvalidRemediationPlan(
+                "write action is not grounded or allowed"
+            )
+
+        # 修复目标及目标配置必须符合登记约定。
+        try:
+            validate_profile_action(matched_profile(state), plan)
+        except ProfileUnavailable as exc:
+            raise InvalidRemediationPlan(str(exc)) from exc
+
+        facts = diagnostic_facts(state)
+        required_ids = list(
+            dict.fromkeys(facts["configuration_evidence_ids"])
+        )
+
+        available_ids = {
+            item["evidence_id"]
+            for item in state.get("evidence", [])
+            if item.get("evidence_id") and not item.get("error")
+        }
+        declared_ids = set(
+            (state.get("diagnosis") or {}).get("evidence_ids", [])
+        )
+
+        if (
+            not facts["configuration_evidence_complete"]
+            or not required_ids
+            or not set(required_ids) <= available_ids
+            or not set(required_ids) <= declared_ids
+        ):
+            raise InvalidRemediationPlan(
+                "cannot attach incomplete or undeclared configuration evidence"
+            )
+
+        # 模型至少应引用一项必要配置证据；完全无关的计划不自动补救。
+        if not set(plan.evidence_ids) & set(required_ids):
+            raise InvalidRemediationPlan(
+                "write plan must already cite at least one configuration evidence"
+            )
+
+        added_ids = [
+            evidence_id
+            for evidence_id in required_ids
+            if evidence_id not in plan.evidence_ids
+        ]
+
+        if added_ids:
+            plan = plan.model_copy(
+                update={
+                    "evidence_ids": [
+                        *plan.evidence_ids,
+                        *added_ids,
+                    ]
+                }
+            )
+
+    # 保留原有参数、引用、风险、审批和修复依据的全部校验。
+    validated = validate_remediation_plan(plan=plan, state=state)
+    return validated, added_ids

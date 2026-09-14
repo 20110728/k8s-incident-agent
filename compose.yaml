@@ -73,6 +73,10 @@ services:
         source: ${KUBECONFIG_PATH:?Set KUBECONFIG_PATH}
         target: /tmp/kubeconfig
         read_only: true
+      - type: bind
+        source: ./backend
+        target: /app/backend
+        read_only: true
     depends_on:
       postgres:
         condition: service_healthy

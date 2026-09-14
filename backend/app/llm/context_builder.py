@@ -111,8 +111,50 @@ def build_diagnosis_context(
             }
         )
 
+    facts = diagnostic_facts(state)
+
     context = {
-        "policy_facts": diagnostic_facts(state),
+        "output_contract": {
+            "always_required_evidence_ids": facts["business_evidence_ids"],
+            "configuration_categories": [
+                "readiness_probe_error",
+                "service_selector_mismatch",
+            ],
+            "configuration_required_evidence_ids": (
+                facts["configuration_evidence_ids"]
+            ),
+            "instructions": [
+                (
+                    "若选择配置故障类别，顶层 evidence_ids 必须包含 "
+                    "configuration_required_evidence_ids 中全部 ID；"
+                    "仅引用 Deployment 不够。"
+                ),
+                (
+                    "顶层 evidence_ids 必须包含 always_required_evidence_ids，"
+                    "以及所有结构化症状和假设使用的 ID。"
+                ),
+                (
+                    "以上引用要求不证明故障成立；仍需依据 policy_facts、"
+                    "实际证据及匹配的 service_profile 判断。"
+                ),
+                (
+                    "有故障或 unknown 时填写真实的 missing_evidence 与 "
+                    "next_investigation；区分配置漂移已确认与变更来源尚未确认，"
+                    "不编造缺失依赖。"
+                ),
+                (
+                    "仅出现 ready=false 的端点仍可能保留在 EndpointSlice 中，"
+                    "不表述为已被删除。未取得处理请求的副本身份时，"
+                    "不确定声称由哪个副本响应。"
+                ),
+            ],
+        },
+        "previous_validation_feedback": (
+            redact_sensitive_text(str(validation_feedback))
+            if validation_feedback
+            else None
+        ),
+        "policy_facts": facts,
         "service_profile": state.get("service_profile"),
         "incident": {
             "namespace": request.get("namespace"),

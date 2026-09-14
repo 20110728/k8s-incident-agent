@@ -1,6 +1,7 @@
 # 工作流节点：读取 IncidentState，返回本节点产生的状态增量。
 # 诊断先经过本地证据门槛，再校验模型结构与引用；失败不会进入自动写操作。
 
+from backend.app.llm.debug_capture import ObservedService, observe_node
 from backend.app.agent.diagnosis_report import build_controlled_report
 
 import re
@@ -41,6 +42,7 @@ from backend.app.llm.diagnoser import (
 from backend.app.agent.remediation_policy import (
     InvalidRemediationPlan,
     validate_remediation_plan,
+    prepare_remediation_plan,
 )
 
 from backend.app.llm.remediation_planner import (
@@ -69,6 +71,7 @@ from backend.app.agent.executor import (
 from backend.app.agent.verification import (
     RecoveryVerifierPort,
 )
+
 
 ALLOWED_NAMESPACE = "agent-demo"
 
@@ -479,12 +482,16 @@ def validate_diagnosis_references(
 def make_diagnose_incident_node(
     diagnoser: DiagnosisServicePort,
 ) -> Callable[[IncidentState], dict[str, Any]]:
+    diagnoser = ObservedService(diagnoser)
+
+    @observe_node("diagnosis")
     def diagnose_incident(
         state: IncidentState,
     ) -> dict[str, Any]:
         accumulated_usage: dict[str, int] = {}
         retry_count = 0
         last_model_name: str | None = None
+        last_model_output: dict[str, Any] | None = None
 
         try:
             # Decide from collected facts before any generative diagnosis. The
@@ -525,6 +532,8 @@ def make_diagnose_incident_node(
                 )
 
                 last_model_name = result.model_name
+                # 在校验前保存本次模型结构，失败时也能查看具体字段。
+                last_model_output = result.diagnosis.model_dump(mode="json")
 
                 for key, value in (
                     result.usage.items()
@@ -629,6 +638,8 @@ def make_diagnose_incident_node(
         except (InvalidDiagnosisReference, InvalidDiagnosisAssessment) as exc:
             return {
                 "phase": "diagnosis_failed",
+                "diagnosis": None,
+                "diagnosis_model_output": last_model_output,
                 "llm_model": last_model_name,
                 "llm_usage": accumulated_usage,
                 "diagnosis_retry_count": (
@@ -653,8 +664,9 @@ def make_diagnose_incident_node(
                         "diagnose_incident",
                         "failed",
                         (
-                            "diagnosis reference "
-                            "validation failed"
+                            "diagnosis assessment validation failed"
+                            if isinstance(exc, InvalidDiagnosisAssessment)
+                            else "diagnosis reference validation failed"
                         ),
                     )
                 ],
@@ -663,6 +675,8 @@ def make_diagnose_incident_node(
         except Exception as exc:
             return {
                 "phase": "diagnosis_failed",
+                "diagnosis": None,
+                "diagnosis_model_output": last_model_output,
                 "llm_model": last_model_name,
                 "llm_usage": accumulated_usage,
                 "diagnosis_retry_count": (
@@ -722,14 +736,17 @@ def skip_remediation(
 def make_plan_remediation_node(
     planner: RemediationPlannerPort,
 ) -> Callable[[IncidentState], dict[str, Any]]:
+    planner = ObservedService(planner)
+
+    @observe_node("remediation")
     def plan_remediation(
         state: IncidentState,
     ) -> dict[str, Any]:
         try:
             result = planner.plan(state)
 
-            validated_plan = (
-                validate_remediation_plan(
+            validated_plan, added_configuration_ids = (
+                prepare_remediation_plan(
                     plan=result.plan,
                     state=state,
                 )
@@ -758,8 +775,10 @@ def make_plan_remediation_node(
                         "plan_remediation",
                         "completed",
                         (
-                            "structured remediation "
-                            "plan completed"
+                            "structured remediation plan completed; "
+                            f"model_evidence_ids={result.plan.evidence_ids!r}; "
+                            "program_added_configuration_evidence_ids="
+                            f"{added_configuration_ids!r}"
                         ),
                     )
                 ],
@@ -1260,7 +1279,7 @@ def make_verify_recovery_node(
                         step="verify_recovery",
                         status="completed",
                         message=(
-                            "Kubernetes recovery "
+                            "Recovery "
                             "verification succeeded"
                         ),
                     )
@@ -1310,7 +1329,7 @@ def make_verify_recovery_node(
                     step="verify_recovery",
                     status="failed",
                     message=(
-                        "Kubernetes recovery "
+                        "Recovery "
                         f"verification finished "
                         f"with status {result.status}"
                     ),

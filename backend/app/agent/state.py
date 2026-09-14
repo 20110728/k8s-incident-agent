@@ -13,6 +13,7 @@ from backend.app.agent.schemas import (
 )
 
 class IncidentState(TypedDict, total=False):
+    llm_debug: dict[str, Any]
     # 请求身份
     incident_id: str
     request: dict[str, str]

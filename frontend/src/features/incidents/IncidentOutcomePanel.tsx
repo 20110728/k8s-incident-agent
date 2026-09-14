@@ -366,6 +366,13 @@ export function IncidentOutcomePanel({
 
               <div className="outcome-message">
                 <span>Verification message</span>
+                <p>Resource verification: {verificationResult.resource_verification_status ?? verificationResult.status}</p>
+                <p>Fresh resource status: {verificationResult.resource_status ?? 'unknown'}</p>
+                <p>Registered business checks: {verificationResult.business_status ?? 'skipped'}</p>
+                {verificationResult.verification_scope !== 'resources_and_registered_business' && (
+                  <p>Legacy resource-only result; business recovery was not verified.</p>
+                )}
+                <p>Unverified: {(verificationResult.unverified_scope ?? ['Business recovery']).join('; ')}</p>
                 <p>{verificationResult.message}</p>
               </div>
 

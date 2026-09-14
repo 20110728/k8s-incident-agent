@@ -221,6 +221,13 @@ export interface VerificationCheck {
 }
 
 export interface RecoveryVerificationResult {
+  verification_scope?: 'resource_only' | 'resources_and_registered_business'
+  resource_verification_status?: VerificationStatus | null
+  resource_status?: 'ready' | 'not_ready' | 'unknown'
+  business_status?: 'passed' | 'failed' | 'unknown' | 'skipped'
+  unverified_scope?: string[]
+  post_repair_evidence?: EvidenceItem[]
+
   execution_id: string
   action: RemediationAction
   status: VerificationStatus
@@ -249,6 +256,7 @@ export interface IncidentError {
 }
 
 export interface IncidentStatusResponse {
+  llm_debug?: JsonObject
   incident_id: string
   thread_id: string
   phase: string

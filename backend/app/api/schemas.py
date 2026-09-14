@@ -69,6 +69,7 @@ class IncidentStatusResponse(BaseModel):
     )
 
     # Audit only: untrusted original model prose, not the authoritative report.
+    llm_debug: dict[str, Any] = Field(default_factory=dict)
     diagnosis_model_output: dict[str, Any] | None = None
     diagnosis: Diagnosis | None = None
     llm_model: str | None = None
@@ -148,6 +149,7 @@ class IncidentStatusResponse(BaseModel):
                 state.get("retrieved_runbooks")
                 or []
             ),
+            llm_debug=dict(state.get("llm_debug") or {}),
             diagnosis_model_output=state.get("diagnosis_model_output"),
             diagnosis=state.get("diagnosis"),
             llm_model=state.get("llm_model"),

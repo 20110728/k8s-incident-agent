@@ -393,6 +393,16 @@ class VerificationCheck(BaseModel):
 class RecoveryVerificationResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    # 旧检查点缺少这些字段时保持 resource_only，不追认业务恢复。
+    verification_scope: Literal['resource_only', 'resources_and_registered_business'] = 'resource_only'
+    resource_verification_status: VerificationStatus | None = None
+    resource_status: Literal['ready', 'not_ready', 'unknown'] = 'unknown'
+    business_status: Literal['passed', 'failed', 'unknown', 'skipped'] = 'skipped'
+    post_repair_evidence: list[dict[str, Any]] = Field(default_factory=list)
+    post_repair_profile: dict[str, Any] | None = None
+    post_repair_collection_errors: list[dict[str, Any]] = Field(default_factory=list)
+    unverified_scope: list[str] = Field(default_factory=lambda: ['业务恢复未验证（旧版资源验证）'])
+
     execution_id: str = Field(
         pattern=r"^exec-[0-9a-f]{16}$",
     )

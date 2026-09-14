@@ -101,9 +101,10 @@ def build_remediation_executor() -> (
     )
 
 
-def build_recovery_verifier() -> (
-    KubernetesRecoveryVerifier
-):
-    return KubernetesRecoveryVerifier(
-        clients=create_clients(),
+def build_recovery_verifier():
+    from backend.app.agent.business_recovery import BusinessRecoveryVerifier
+
+    return BusinessRecoveryVerifier(
+        resource_verifier=KubernetesRecoveryVerifier(clients=create_clients()),
+        collector=build_kubernetes_collector(),
     )

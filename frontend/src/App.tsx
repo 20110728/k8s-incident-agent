@@ -1,3 +1,4 @@
+import { IncidentDebugPanel } from './features/incidents/IncidentDebugPanel'
 import {
   useEffect,
   useState,
@@ -593,7 +594,10 @@ function App() {
             </section>
           </div>
           {incident && (
-            <IncidentAnalysis incident={incident} />
+            <>
+              <IncidentDebugPanel incident={incident} />
+              <IncidentAnalysis incident={incident} />
+            </>
           )}
 
           {incident && (

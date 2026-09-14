@@ -142,8 +142,39 @@ def validate_diagnosis_assessment(diagnosis: Diagnosis, state: dict) -> None:
                 'no_fault_detected requires ready resources and all registered business checks passed, without current drift/failure')
         require(set(facts['resource_evidence_ids']) <= set(diagnosis.evidence_ids), 'no_fault_detected must cite current resource evidence')
         require(not a.root_cause_hypotheses, 'no_fault_detected must not assert an active root cause')
+    
     else:
-        require(bool(a.missing_evidence) and bool(a.next_investigation), 'fault/unknown diagnosis must state missing evidence and next investigation')
+        # 已有充分证据支持的配置故障，不强制虚构缺失证据或调查步骤。
+        # 仅有模型分类不够：必须存在真实漂移、完整配置证据，
+        # 且 supported 假设引用了必要配置证据。
+        config_key = {
+            'service_selector_mismatch': 'selector_drift',
+            'readiness_probe_error': 'readiness_drift',
+        }.get(category)
+
+        grounded_configuration = bool(
+            config_key
+            and facts['configuration_evidence_complete']
+            and facts[config_key]
+            and facts['business_status'] != 'failed'
+            and not facts['current_runtime_faults']
+            and any(
+                h.status == 'supported'
+                and set(facts['configuration_evidence_ids'])
+                <= set(h.evidence_ids)
+                for h in a.root_cause_hypotheses
+            )
+        )
+
+        # 其他故障、证据不足或仅有猜测的配置问题，仍保持原要求。
+        if not grounded_configuration:
+            require(
+                bool(a.missing_evidence)
+                and bool(a.next_investigation),
+                'fault/unknown diagnosis must state missing evidence '
+                'and next investigation',
+            )   
+
     if category == 'unknown':
         require(diagnosis.confidence <= 0.6, 'unknown confidence must be <= 0.6')
     if category in {'service_selector_mismatch', 'readiness_probe_error'}:
