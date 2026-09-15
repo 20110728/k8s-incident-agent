@@ -65,6 +65,8 @@ class ServiceProfile(ContractModel):
     config_source: Text
     application: ApplicationContract
     expected_selector: dict[Text, Text] = Field(min_length=1)
+    # Optional for legacy profiles; Demo explicitly registers its replica contract.
+    expected_replicas: Annotated[int, Field(strict=True, ge=1)] | None = None
     readiness_probe: HttpProbeContract
     liveness_probe: HttpProbeContract
     business_checks: list[BusinessCheckContract] = Field(max_length=10)

@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "profile_id": "agent-demo.order-service",
-  "revision": "2",
+  "revision": "3",
   "namespace": "agent-demo",
   "service_name": "order-service",
   "deployment_name": "order-service",
@@ -20,6 +20,7 @@
   "expected_selector": {
     "app": "order-service"
   },
+  "expected_replicas": 2,
   "readiness_probe": {
     "path": "/readyz",
     "port": "http",

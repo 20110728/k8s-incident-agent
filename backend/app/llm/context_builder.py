@@ -130,6 +130,13 @@ def build_diagnosis_context(
                     "仅引用 Deployment 不够。"
                 ),
                 (
+                    "配置根因假设若标记为 supported，该假设自身的 evidence_ids "
+                    "也必须包含全部 configuration_required_evidence_ids；"
+                    "仅在顶层引用 Service 不满足假设的证据绑定。"
+                    "先核对证据是否支持该假设，无法确认则保持 suspected 并说明缺失证据，"
+                    "不得为了获得写动作而升级结论或机械补引用。"
+                ),
+                (
                     "顶层 evidence_ids 必须包含 always_required_evidence_ids，"
                     "以及所有结构化症状和假设使用的 ID。"
                 ),

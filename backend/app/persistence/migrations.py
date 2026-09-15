@@ -100,6 +100,21 @@ MIGRATIONS = (
             """,
         ),
     ),
+    Migration(
+        version=2,
+        name="create_rechecks",
+        statements=(
+            """CREATE TABLE incident_agent_app.rechecks (
+                sequence BIGSERIAL PRIMARY KEY,
+                recheck_id TEXT NOT NULL UNIQUE,
+                incident_id TEXT NOT NULL REFERENCES incident_agent_app.incidents(incident_id) ON DELETE CASCADE,
+                result JSONB NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )""",
+            """CREATE INDEX rechecks_incident_sequence_idx
+                ON incident_agent_app.rechecks (incident_id, sequence DESC)""",
+        ),
+    ),
 )
 
 

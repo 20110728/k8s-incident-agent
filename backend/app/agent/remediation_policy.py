@@ -114,22 +114,8 @@ def _find_evidence(
 
 
 def _has_grounded_readiness_candidate(state: IncidentState) -> bool:
-    try:
-        profile = matched_profile(state)
-    except ProfileUnavailable:
-        return False
-    deployments = _find_evidence(state, resource_type="Deployment",
-                                 resource_name=profile.deployment_name)
-    for container in deployments[0]["data"].get("containers", []):
-        if container.get("name") != profile.container_name:
-            continue
-        probe = container.get("readiness_probe") or {}
-        expected = profile.readiness_probe
-        # This executor changes path/port only. Scheme changes require manual work.
-        return bool(probe.get("path") and probe.get("port") is not None
-                    and (probe.get("scheme") or "HTTP") == expected.scheme
-                    and (probe.get("path"), probe.get("port")) != (expected.path, expected.port))
-    return False
+    # A missing or different-scheme probe is drift, but this writer cannot fix it.
+    return diagnostic_facts(state)['readiness_patch_supported']
 
 
 def _has_grounded_selector_candidate(state: IncidentState) -> bool:

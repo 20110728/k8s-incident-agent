@@ -23,7 +23,7 @@ from backend.app.service_profiles.registry import make_snapshot
 def state():
     profile = ServiceProfile.model_validate(json.loads((Path(__file__).resolve().parents[3] / 'config/service-profiles/agent-demo.order-service.json').read_text()))
     dep = dict(namespace='agent-demo', name='order-service', uid='uid-1', generation=4,
-               resource_version='100', desired_replicas=1, ready_replicas=1, available_replicas=1,
+               resource_version='100', desired_replicas=2, ready_replicas=2, available_replicas=2,
                template_labels={**profile.expected_selector, profile.application.version_label: profile.application.version},
                containers=[dict(name=profile.container_name, image=profile.application.images[profile.container_name],
                                 readiness_probe=profile.readiness_probe.model_dump(), liveness_probe=profile.liveness_probe.model_dump())])
@@ -35,6 +35,12 @@ def state():
             ('EndpointSlice','order-endpoints',dict(namespace='agent-demo',service_name='order-service',endpoints=[dict(ready=True,target_name='order-pod')])),
             ('BusinessCheck','order-service/get-demo-order',dict(check_id='get-demo-order', status='passed',error_code=None,http_status=200,
                 content_matches=True, scope='cluster_service_http',request_id='a'*32,target=build_target(profile,profile.business_checks[0],svc)))]
+    # Keep existing evidence indexes stable while representing both Demo replicas.
+    rows.extend([
+        ('OwnerChain', 'order-pod-2', dict(owner_chain=dict(namespace='agent-demo', deployment_name='order-service'))),
+        ('PodStatus', 'order-pod-2', dict(namespace='agent-demo', ready=True, containers=[dict(state='running')])),
+    ])
+    rows[4][2]['endpoints'].append(dict(ready=True, target_name='order-pod-2'))
     return dict(incident_id='stage4-test',request=dict(namespace='agent-demo',service_name='order-service',description='检查当前状态'),
                 service_profile=make_snapshot(profile,dep),
                 evidence=[dict(evidence_id=f'ev-test-{i:03d}', resource_type=k,resource_name=n,data=d,
@@ -103,7 +109,7 @@ def test_ready_but_business_failure_blocks_normal(state,code,http,content):
 def test_incomplete_or_unbound_check_never_passes(state,mode):
     check=state['evidence'][5]
     if mode in {'unknown','skipped'}: check['data']['status']=mode
-    if mode=='missing': state['evidence'].pop()
+    if mode=='missing': state['evidence'].remove(check)
     if mode=='duplicate': state['evidence'].append(copy.deepcopy(check))
     if mode=='wrong_target': check['data']['target']['service_name']='other'
     if mode=='wrong_source': check['source']='PodLogs'

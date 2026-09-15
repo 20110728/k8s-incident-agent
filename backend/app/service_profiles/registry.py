@@ -16,7 +16,12 @@ class ProfileUnavailable(ValueError):
 
 
 def profile_digest(profile: ServiceProfile) -> str:
-    canonical = json.dumps(profile.model_dump(mode="json"), sort_keys=True,
+    payload = profile.model_dump(mode="json")
+    # Keep old snapshot/checker digests stable when no replica contract existed.
+    # A registered value is included and therefore invalidates old approvals.
+    if payload.get("expected_replicas") is None:
+        payload.pop("expected_replicas", None)
+    canonical = json.dumps(payload, sort_keys=True,
                            separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(canonical.encode()).hexdigest()
 

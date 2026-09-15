@@ -81,7 +81,8 @@ def test_precheck_scope_is_narrow(state, mode):
     if mode == 'business_failed': state['evidence'][5]['data'].update(status='failed', http_status=500, error_code='HTTP_STATUS_MISMATCH')
     if mode == 'profile_mismatch': state['service_profile']['status'] = 'mismatch'
     if mode == 'configuration_drift': state['evidence'][0]['data']['selector'] = {'app':'wrong'}
-    if mode == 'no_business_evidence': state['evidence'].pop()
+    if mode == 'no_business_evidence':
+        state['evidence'] = [e for e in state['evidence'] if e['resource_type'] != 'BusinessCheck']
     if mode == 'runtime_fault': state['evidence'][3]['data']['containers'][0].update(state='waiting', waiting_reason='CrashLoopBackOff')
     if mode == 'missing_probe': state['evidence'][1]['data']['containers'][0]['readiness_probe'] = None
     with pytest.raises(InvalidDiagnosisAssessment): insufficient_evidence_diagnosis(state)
