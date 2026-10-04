@@ -1,0 +1,20 @@
+{
+  "incident_id": "legacy-terminal-synthetic",
+  "thread_id": "legacy-terminal-synthetic",
+  "phase": "verification_succeeded",
+  "waiting_for_approval": false,
+  "request": {
+    "namespace": "agent-demo",
+    "service_name": "order-service",
+    "description": "检查当前订单服务状态，区分已观察到的症状和未证实的根因。"
+  },
+  "verification_result": {
+    "execution_id": "exec-0123456789abcdef",
+    "action": "patch_readiness_probe",
+    "status": "succeeded",
+    "started_at": "2026-09-15T00:00:00Z",
+    "finished_at": "2026-09-15T00:00:01Z",
+    "attempts": 1,
+    "message": "Synthetic legacy resource-only verification."
+  }
+}

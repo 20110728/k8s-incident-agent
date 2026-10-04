@@ -1,0 +1,25 @@
+{
+  "recheck_id": "legacy-recheck-synthetic",
+  "incident_id": "legacy-terminal-synthetic",
+  "started_at": "2026-09-15T00:10:00Z",
+  "finished_at": "2026-09-15T00:10:01Z",
+  "note": "Synthetic unknown observation; no live collection.",
+  "note_source": "user_supplied_unverified",
+  "status": "unknown",
+  "resource_status": "unknown",
+  "business_status": "unknown",
+  "target_comparison": {
+    "status": "unknown"
+  },
+  "recovery_attribution": "not_established",
+  "evidence": [],
+  "service_profile": {},
+  "policy_facts": {},
+  "collection_errors": [],
+  "unverified_scope": [
+    "Synthetic fixture; live observation unavailable."
+  ],
+  "excluded_terminating_pods": [],
+  "cluster_writes_executed": false,
+  "model_called": false
+}

@@ -1,0 +1,15 @@
+{
+  "new_python_ast": [
+    "scripts\\audit_stage0a.py",
+    "backend\\tests\\compatibility\\test_stage0a_samples.py"
+  ],
+  "bash_syntax": {
+    "command": [
+      "bash",
+      "-n"
+    ],
+    "exit_code": 3221225794,
+    "stderr": "      0 [main] bash (16708) D:\\App\\Git\\bin\\..\\usr\\bin\\bash.exe: *** fatal error - couldn't create signal pipe, Win32 error 5\n"
+  },
+  "scope": "new Python AST passed; Bash could not start in this Windows environment; no ECS commands executed"
+}
