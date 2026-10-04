@@ -12,10 +12,17 @@ from backend.app.agent.execution_policy import (
 from backend.app.agent.schemas import (
     ActionExecutionResult,
     ApprovalRecord,
+    Diagnosis,
     LabelPair,
     RemediationParameters,
     RemediationPlan,
 )
+from backend.app.agent.diagnosis_policy import validate_diagnosis_assessment
+from backend.app.agent.remediation_policy import (
+    InvalidRemediationPlan,
+    validate_remediation_plan,
+)
+from backend.tests.agent.selector_fixtures import selector_assessment
 
 
 def selector_plan() -> RemediationPlan:
@@ -55,6 +62,7 @@ def selector_plan() -> RemediationPlan:
         evidence_ids=[
             "ev-exec-001",
             "ev-exec-002",
+            "ev-profile-deployment",
         ],
         runbook_ids=[
             "selector-label-mismatch",
@@ -70,6 +78,8 @@ def selector_evidence() -> list[dict]:
             "resource_type": "Service",
             "resource_name": "order-service",
             "data": {
+                "namespace": "agent-demo",
+                "name": "order-service",
                 "selector": {
                     "app": "wrong-service",
                 }
@@ -80,11 +90,20 @@ def selector_evidence() -> list[dict]:
             "resource_type": "PodStatus",
             "resource_name": "order-service-abc",
             "data": {
+                "namespace": "agent-demo",
                 "ready": True,
                 "labels": {
                     "app": "order-service",
                 },
             },
+        },
+        {
+            "evidence_id": "ev-exec-owner",
+            "resource_type": "OwnerChain",
+            "resource_name": "order-service-abc",
+            "data": {"owner_chain": {
+                "namespace": "agent-demo", "deployment_name": "order-service",
+            }},
         },
     ]
 
@@ -106,6 +125,9 @@ def approved_state() -> dict:
         "approved": None,
         "remediation_plan": plan,
         "diagnosis": {
+            "assessment": selector_assessment(
+                "ev-exec-001", "ev-profile-deployment"
+            ).model_dump(),
             "fault_category": (
                 "service_selector_mismatch"
             ),
@@ -115,6 +137,7 @@ def approved_state() -> dict:
             "evidence_ids": [
                 "ev-exec-001",
                 "ev-exec-002",
+                "ev-profile-deployment",
             ],
             "runbook_ids": [
                 "selector-label-mismatch",
@@ -137,6 +160,14 @@ def approved_state() -> dict:
     }
 
     with_profile(state)
+    deployment = next(
+        e["data"] for e in state["evidence"]
+        if e["evidence_id"] == "ev-profile-deployment"
+    )
+    deployment.update(desired_replicas=1, ready_replicas=1, available_replicas=1)
+    deployment["containers"][0]["readiness_probe"] = {
+        "path": "/healthz", "port": "http", "scheme": "HTTP",
+    }
     approval_request = build_approval_request(
         state
     )
@@ -249,6 +280,29 @@ def test_approved_plan_is_authorized():
     assert result.execution_id.startswith(
         "exec-"
     )
+
+
+def test_selector_fixture_satisfies_current_diagnosis_contract():
+    state = approved_state()
+    validate_diagnosis_assessment(Diagnosis.model_validate(state["diagnosis"]), state)
+    validate_remediation_plan(plan=state["remediation_plan"], state=state)
+
+
+@pytest.mark.parametrize("missing", ["assessment", "probe", "deployment_reference"])
+def test_selector_fixture_missing_write_evidence_is_still_rejected(missing):
+    state = approved_state()
+    if missing == "assessment":
+        state["diagnosis"].pop("assessment")
+    elif missing == "probe":
+        deployment = next(e["data"] for e in state["evidence"]
+                          if e["resource_type"] == "Deployment")
+        deployment["containers"][0].pop("readiness_probe")
+    else:
+        state["remediation_plan"].evidence_ids.remove("ev-profile-deployment")
+    # Validate the policy directly so approval fingerprint rejection cannot mask
+    # an accidentally weakened evidence gate.
+    with pytest.raises(InvalidRemediationPlan):
+        validate_remediation_plan(plan=state["remediation_plan"], state=state)
 
 
 def test_rejected_state_is_not_authorized():

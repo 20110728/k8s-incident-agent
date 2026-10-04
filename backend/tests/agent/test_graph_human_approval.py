@@ -20,10 +20,11 @@ from backend.tests.agent.fakes import (
     FakeRemediationPlanner,
     FakeRetriever,
 )
+from backend.tests.agent.selector_fixtures import selector_assessment
 
 
 def selector_mismatch_bundle() -> dict:
-    return with_bundle_profile({
+    bundle = with_bundle_profile({
         "namespace": "agent-demo",
         "service_name": "order-service",
         "service": {
@@ -49,6 +50,7 @@ def selector_mismatch_bundle() -> dict:
         "endpoint_slices": [],
         "pod_statuses": {
             "order-service-test": {
+                "namespace": "agent-demo",
                 "phase": "Running",
                 "ready": True,
                 "labels": {
@@ -60,11 +62,24 @@ def selector_mismatch_bundle() -> dict:
             "order-service-test": [],
         },
         "pod_logs": [],
-        "owner_chains": {},
+        "owner_chains": {
+            "order-service-test": {
+                "namespace": "agent-demo",
+                "deployment_name": "order-service",
+            },
+        },
         "deployments": {},
         "nodes": {},
         "errors": [],
     })
+    # A registered release identity alone is insufficient for current write
+    # authorization: the synthetic scene must include observed configuration.
+    deployment = bundle["deployments"]["order-service"]
+    deployment.update(desired_replicas=1, ready_replicas=1, available_replicas=1)
+    deployment["containers"][0]["readiness_probe"] = {
+        "path": "/healthz", "port": "http", "scheme": "HTTP",
+    }
+    return bundle
 
 
 def selector_runbooks() -> list[dict]:
@@ -93,6 +108,8 @@ def selector_diagnosis() -> Diagnosis:
     # incident_id固定为day13-selector-approval，
     # normalize_evidence生成ev-day13-xxx。
     return Diagnosis(
+        # normalize_evidence order: Service, selection, Pod, events, owner, Deployment.
+        assessment=selector_assessment("ev-day13-001", "ev-day13-006"),
         fault_category="service_selector_mismatch",
         root_cause=(
             "Service Selector中的app标签值"
@@ -102,6 +119,7 @@ def selector_diagnosis() -> Diagnosis:
             "ev-day13-001",
             "ev-day13-002",
             "ev-day13-003",
+            "ev-day13-006",
         ],
         runbook_ids=[
             "selector-label-mismatch",
@@ -154,6 +172,7 @@ def selector_patch_plan() -> RemediationPlan:
             "ev-day13-001",
             "ev-day13-002",
             "ev-day13-003",
+            "ev-day13-006",
         ],
         runbook_ids=[
             "selector-label-mismatch",
@@ -284,7 +303,7 @@ def test_full_graph_interrupts_and_resumes(
         config=config,
     )
 
-    assert paused["phase"] == "awaiting_approval"
+    assert paused["phase"] == "awaiting_approval", paused.get("errors")
     assert paused["approval_status"] == "pending"
     assert paused["approved"] is None
     assert "__interrupt__" in paused

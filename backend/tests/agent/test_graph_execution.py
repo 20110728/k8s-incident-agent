@@ -87,7 +87,7 @@ def pause_graph(components):
         config=config,
     )
 
-    assert "__interrupt__" in paused
+    assert "__interrupt__" in paused, paused.get("errors")
 
     approval_request = paused[
         "__interrupt__"
