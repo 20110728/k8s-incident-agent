@@ -1,0 +1,418 @@
+{
+  "suite_version": "complex-v1",
+  "suite_revision": 1,
+  "baseline_commit": "aa3b082",
+  "cases": [
+    {
+      "case_id": "C01",
+      "title": "????selector ????? 500",
+      "split": "development",
+      "input_file": "inputs/C01.json",
+      "expected_file": "expected/C01.private.json",
+      "levels": [
+        "L0",
+        "L3",
+        "L4",
+        "L5"
+      ],
+      "full_scenario_runnable": false,
+      "availability": "initial_snapshot_only",
+      "requires": [
+        "composable_faults",
+        "incident_rounds",
+        "operation_ledger"
+      ],
+      "observation_file": "observations/C01-initial.json",
+      "source_fixture": "evals/cases/v02-stage5/selector_mismatch.json",
+      "source_sha256_lf": "a59acd472ca5c79af5e593b7d2725a0d7505a2506fb8c7e3a820f33a50dffc78",
+      "reserved_variants": [
+        "C01-dev-01",
+        "C01-holdout-01",
+        "C01-holdout-02"
+      ]
+    },
+    {
+      "case_id": "C02",
+      "title": "readiness ???????",
+      "split": "development",
+      "input_file": "inputs/C02.json",
+      "expected_file": "expected/C02.private.json",
+      "levels": [
+        "L0",
+        "L3",
+        "L4"
+      ],
+      "full_scenario_runnable": false,
+      "availability": "initial_snapshot_only",
+      "requires": [
+        "registered_dependency_probe",
+        "bounded_investigation"
+      ],
+      "observation_file": "observations/C02-initial.json",
+      "source_fixture": "evals/cases/v02-stage5/dependency_unavailable.json",
+      "source_sha256_lf": "c1fd505b667bd6c464c85f704afb71361b5da92ccb5c4fc1e247705c7d63ca6b",
+      "reserved_variants": [
+        "C02-dev-01",
+        "C02-holdout-01",
+        "C02-holdout-02"
+      ]
+    },
+    {
+      "case_id": "C03",
+      "title": "?????????????",
+      "split": "development",
+      "input_file": "inputs/C03.json",
+      "expected_file": "expected/C03.private.json",
+      "levels": [
+        "L0",
+        "L3",
+        "L4"
+      ],
+      "full_scenario_runnable": false,
+      "availability": "request_only",
+      "requires": [
+        "versioned_rollout_fault",
+        "pod_version_identity"
+      ],
+      "reserved_variants": [
+        "C03-dev-01",
+        "C03-holdout-01",
+        "C03-holdout-02"
+      ]
+    },
+    {
+      "case_id": "C04",
+      "title": "?? Ready ????????",
+      "split": "development",
+      "input_file": "inputs/C04.json",
+      "expected_file": "expected/C04.private.json",
+      "levels": [
+        "L0",
+        "L3"
+      ],
+      "full_scenario_runnable": false,
+      "availability": "request_only",
+      "requires": [
+        "per_pod_fault_switch",
+        "sampling_coverage"
+      ],
+      "reserved_variants": [
+        "C04-dev-01",
+        "C04-holdout-01",
+        "C04-holdout-02"
+      ]
+    },
+    {
+      "case_id": "C05",
+      "title": "???????",
+      "split": "development",
+      "input_file": "inputs/C05.json",
+      "expected_file": "expected/C05.private.json",
+      "levels": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "full_scenario_runnable": false,
+      "availability": "request_only",
+      "requires": [
+        "scripted_response_sequence",
+        "durable_delayed_recheck"
+      ],
+      "reserved_variants": [
+        "C05-dev-01",
+        "C05-holdout-01",
+        "C05-holdout-02"
+      ]
+    },
+    {
+      "case_id": "C06",
+      "title": "?? OOM ?????",
+      "split": "development",
+      "input_file": "inputs/C06.json",
+      "expected_file": "expected/C06.private.json",
+      "levels": [
+        "L0",
+        "L3",
+        "L4",
+        "L5"
+      ],
+      "full_scenario_runnable": false,
+      "availability": "initial_snapshot_only",
+      "requires": [
+        "timestamped_history",
+        "incident_messages"
+      ],
+      "observation_file": "observations/C06-initial.json",
+      "source_fixture": "evals/cases/v02-stage5/historical_recovered.json",
+      "source_sha256_lf": "794a6d5a1347000b48f3c315d5cea8c36bd6e517dc61a331d470ee4af78aee56",
+      "reserved_variants": [
+        "C06-dev-01",
+        "C06-holdout-01",
+        "C06-holdout-02"
+      ]
+    },
+    {
+      "case_id": "C07",
+      "title": "??????",
+      "split": "development",
+      "input_file": "inputs/C07.json",
+      "expected_file": "expected/C07.private.json",
+      "levels": [
+        "L0",
+        "L3",
+        "L4"
+      ],
+      "full_scenario_runnable": false,
+      "availability": "request_only",
+      "requires": [
+        "extended_log_attack",
+        "tool_audit"
+      ],
+      "reserved_variants": [
+        "C07-dev-01",
+        "C07-holdout-01",
+        "C07-holdout-02"
+      ]
+    },
+    {
+      "case_id": "C08",
+      "title": "????????????",
+      "split": "development",
+      "input_file": "inputs/C08.json",
+      "expected_file": "expected/C08.private.json",
+      "levels": [
+        "L0",
+        "L1",
+        "L3",
+        "L5"
+      ],
+      "full_scenario_runnable": false,
+      "availability": "request_only",
+      "requires": [
+        "incident_messages",
+        "recheck_ui"
+      ],
+      "reserved_variants": [
+        "C08-dev-01",
+        "C08-holdout-01",
+        "C08-holdout-02"
+      ]
+    },
+    {
+      "case_id": "C09",
+      "title": "???????????",
+      "split": "development",
+      "input_file": "inputs/C09.json",
+      "expected_file": "expected/C09.private.json",
+      "levels": [
+        "L0",
+        "L1",
+        "L3"
+      ],
+      "full_scenario_runnable": false,
+      "availability": "request_only",
+      "requires": [
+        "service_uid_binding",
+        "plan_revisions",
+        "recreate_service_injector"
+      ],
+      "reserved_variants": [
+        "C09-dev-01",
+        "C09-holdout-01",
+        "C09-holdout-02"
+      ]
+    },
+    {
+      "case_id": "C10",
+      "title": "??????????",
+      "split": "development",
+      "input_file": "inputs/C10.json",
+      "expected_file": "expected/C10.private.json",
+      "levels": [
+        "L0",
+        "L3",
+        "L4"
+      ],
+      "full_scenario_runnable": false,
+      "availability": "initial_snapshot_only",
+      "requires": [
+        "probe_state_tool",
+        "fresh_recheck"
+      ],
+      "observation_file": "observations/C10-initial.json",
+      "source_fixture": "evals/cases/v02-stage5/evidence_missing.json",
+      "source_sha256_lf": "e5536d14b8a88078e0321be41c0e88065cc9d8a32276a7f29b0c3ca3c72fa5a7",
+      "reserved_variants": [
+        "C10-dev-01",
+        "C10-holdout-01",
+        "C10-holdout-02"
+      ]
+    },
+    {
+      "case_id": "C11",
+      "title": "????????? URL",
+      "split": "development",
+      "input_file": "inputs/C11.json",
+      "expected_file": "expected/C11.private.json",
+      "levels": [
+        "L0",
+        "L3",
+        "L4",
+        "L5"
+      ],
+      "full_scenario_runnable": false,
+      "availability": "request_only",
+      "requires": [
+        "incident_messages",
+        "target_authorization"
+      ],
+      "reserved_variants": [
+        "C11-dev-01",
+        "C11-holdout-01",
+        "C11-holdout-02"
+      ]
+    },
+    {
+      "case_id": "C12",
+      "title": "??????? profile",
+      "split": "development",
+      "input_file": "inputs/C12.json",
+      "expected_file": "expected/C12.private.json",
+      "levels": [
+        "L0",
+        "L3",
+        "L4"
+      ],
+      "full_scenario_runnable": false,
+      "availability": "request_only",
+      "requires": [
+        "stale_profile_injector",
+        "profile_revalidation"
+      ],
+      "reserved_variants": [
+        "C12-dev-01",
+        "C12-holdout-01",
+        "C12-holdout-02"
+      ]
+    },
+    {
+      "case_id": "R01",
+      "title": "??????????????",
+      "split": "development",
+      "input_file": "inputs/R01.json",
+      "expected_file": "expected/R01.private.json",
+      "levels": [
+        "L0",
+        "L1",
+        "L2"
+      ],
+      "full_scenario_runnable": false,
+      "availability": "request_only",
+      "requires": [
+        "durable_runs",
+        "idempotency",
+        "response_disconnect_barrier"
+      ],
+      "minimum_repeats_per_window": 3
+    },
+    {
+      "case_id": "R02",
+      "title": "????????? worker",
+      "split": "development",
+      "input_file": "inputs/R02.json",
+      "expected_file": "expected/R02.private.json",
+      "levels": [
+        "L1",
+        "L2"
+      ],
+      "full_scenario_runnable": false,
+      "availability": "request_only",
+      "requires": [
+        "worker_lease",
+        "recovery_coordinator",
+        "kill_barrier"
+      ],
+      "minimum_repeats_per_window": 3
+    },
+    {
+      "case_id": "R03",
+      "title": "??????????",
+      "split": "development",
+      "input_file": "inputs/R03.json",
+      "expected_file": "expected/R03.private.json",
+      "levels": [
+        "L1",
+        "L2"
+      ],
+      "full_scenario_runnable": false,
+      "availability": "request_only",
+      "requires": [
+        "durable_interrupt_input",
+        "question_revision"
+      ],
+      "minimum_repeats_per_window": 3
+    },
+    {
+      "case_id": "R04",
+      "title": "???????????",
+      "split": "development",
+      "input_file": "inputs/R04.json",
+      "expected_file": "expected/R04.private.json",
+      "levels": [
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "full_scenario_runnable": false,
+      "availability": "request_only",
+      "requires": [
+        "operation_ledger",
+        "write_response_failpoint",
+        "reconciliation"
+      ],
+      "minimum_repeats_per_window": 3
+    },
+    {
+      "case_id": "R05",
+      "title": "? worker ????????",
+      "split": "development",
+      "input_file": "inputs/R05.json",
+      "expected_file": "expected/R05.private.json",
+      "levels": [
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "full_scenario_runnable": false,
+      "availability": "request_only",
+      "requires": [
+        "lease_epoch_cas",
+        "concurrent_approval_transaction",
+        "barriers"
+      ],
+      "minimum_repeats_per_window": 3
+    },
+    {
+      "case_id": "R06",
+      "title": "??????????",
+      "split": "development",
+      "input_file": "inputs/R06.json",
+      "expected_file": "expected/R06.private.json",
+      "levels": [
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "full_scenario_runnable": false,
+      "availability": "request_only",
+      "requires": [
+        "db_failure_injector",
+        "operation_ledger",
+        "recovery_coordinator"
+      ],
+      "minimum_repeats_per_window": 3
+    }
+  ]
+}
