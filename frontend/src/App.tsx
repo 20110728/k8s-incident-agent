@@ -553,6 +553,16 @@ function App() {
                       </dd>
                     </div>
 
+                    {incident.run && (
+                      <div>
+                        <dt>Task status</dt>
+                        <dd>{incident.run.status}</dd>
+                        {incident.run.last_error_code && (
+                          <dd>{incident.run.last_error_code}</dd>
+                        )}
+                      </div>
+                    )}
+
                     <div>
                       <dt>Waiting for approval</dt>
                       <dd>
@@ -572,8 +582,10 @@ function App() {
                   </dl>
 
                   <p className="incident-note">
-                    {incident.run && incident.worker_available === false
-                      ? '任务已保存，当前环境尚未启用后台执行。可凭事件 ID 找回任务。'
+                    {incident.run?.status === 'waiting_approval'
+                      ? '诊断和方案已保存。本阶段的排队任务暂不支持审批执行，请等待后续功能开放。'
+                      : incident.run && incident.worker_available === false
+                      ? '任务已保存，当前没有在线 worker。可凭事件 ID 找回任务。'
                       : '事件响应已保存，可查看下方诊断证据和处置结果。'}
                   </p>
                 </>
@@ -601,7 +613,7 @@ function App() {
             </>
           )}
 
-          {incident && (
+          {incident && !incident.run && (
             <ApprovalDecisionPanel
               incident={incident}
               submitting={

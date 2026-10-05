@@ -160,6 +160,22 @@ MIGRATIONS = (
 )
 
 
+MIGRATIONS += (
+    Migration(
+        version=4,
+        name="worker_presence",
+        statements=(
+            """CREATE TABLE incident_agent_app.workers (
+                worker_id TEXT PRIMARY KEY,
+                expires_at TIMESTAMPTZ NOT NULL
+            )""",
+            """CREATE INDEX runs_claim_idx ON incident_agent_app.runs (created_at,run_id)
+                WHERE status IN ('queued','retry_scheduled','running')""",
+        ),
+    ),
+)
+
+
 def run_migrations(
     connection: MigrationConnectionPort,
 ) -> list[int]:

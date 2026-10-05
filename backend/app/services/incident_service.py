@@ -353,6 +353,11 @@ class IncidentApplicationService:
         else:
             try:
                 values = self._graph.get_state(_graph_config(row["thread_id"])).values
+                if not values and (row["status"] in {"running", "retry_scheduled"} or
+                        (row.get("last_error") or {}).get("code") in {
+                            "WORKER_FAILED", "ATTEMPTS_EXHAUSTED", "UNSUPPORTED_OR_CORRUPT_INPUT"}):
+                    values = {"incident_id": row["incident_id"], "request": row["input_payload"],
+                              "phase": "failed" if row["status"] == "failed" else "created"}
                 if not isinstance(values, Mapping) or not values:
                     raise IncidentGraphError("executed run checkpoint is missing")
                 state = _normalize_state(values, incident_id=row["incident_id"])
@@ -361,7 +366,8 @@ class IncidentApplicationService:
             except Exception as error:
                 raise IncidentGraphError("run checkpoint lookup failed") from error
         return IncidentSnapshot(row["incident_id"], row["thread_id"], state,
-                                run=run_summary(row), execution_mode=self._execution_mode)
+                                run=run_summary(row), execution_mode=self._execution_mode,
+                                worker_available=self._runs.worker_available())
 
     def get_by_idempotency_key(self, key: str) -> IncidentSnapshot:
         row = self._runs.by_key(key) if self._runs is not None else None

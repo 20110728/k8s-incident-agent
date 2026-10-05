@@ -84,6 +84,14 @@ describe('incident polling', () => {
       finished_at: null, attempt: 0, last_error_code: null,
     }
     expect(shouldContinueIncidentPolling(incident)).toBe(false)
+    incident.worker_available = true
+    expect(shouldContinueIncidentPolling(incident)).toBe(true)
+    incident.run.status = 'running'
+    expect(shouldContinueIncidentPolling(incident)).toBe(true)
+    for (const status of ['succeeded', 'failed', 'waiting_approval', 'reconciling']) {
+      incident.run.status = status
+      expect(shouldContinueIncidentPolling(incident)).toBe(false)
+    }
   })
   it('continues only for known active phases', () => {
     expect(

@@ -77,9 +77,17 @@ PostgreSQL 容器名默认就是现场的 `k8s-incident-agent-postgres-1`。
 
 ```bash
 # 确保 .env 中没有把 INCIDENT_AGENT_EXECUTION_MODE 设置为 queued
-docker compose restart backend
-docker compose up -d --build --no-deps frontend
-curl --fail http://127.0.0.1:8000/readyz
+(
+  set -e
+  export LOCAL_UID="$(id -u)"
+  export LOCAL_GID="$(id -g)"
+  export KUBECONFIG_PATH="$(docker inspect k8s-incident-agent-backend-1 --format '{{range .Mounts}}{{if eq .Destination "/tmp/kubeconfig"}}{{.Source}}{{end}}{{end}}')"
+  test -r "$KUBECONFIG_PATH"
+  docker compose config --quiet
+  docker compose restart backend
+  docker compose up -d --build --no-deps frontend
+  curl --fail --retry 20 --retry-connrefused --retry-delay 2 http://127.0.0.1:8000/readyz
+)
 ```
 
 预期 readyz 返回 `status: ready`。仅新增数据库表，没有数据回填，也没有新增运行依赖。
@@ -106,3 +114,6 @@ ECS 运行测试、真实 PostgreSQL 并发/事务、真实 checkpoint、前端�
 
 拉取修复后重新执行 `bash scripts/accept_stage1a.sh`。仍自动新建独立测试库；
 预期后端无失败，继续完成前端测试与构建，最后显示 `PASS: 1A ECS acceptance`。
+
+维护者随后反馈：215a3ae 复验输出 PASS，补齐 Compose 环境变量后的部署也执行成功。
+1A 按维护者反馈通过，进入 1B；原真实旧事件样本缺失的限制仍保留。

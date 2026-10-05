@@ -88,6 +88,13 @@ sync 不宣传请求幂等，收到 Idempotency-Key 明确返回 409/QUEUED_MODE
 1B worker 通过验收后统一切 queued，才发布异步执行体验；不以 FastAPI BackgroundTasks
 冒充 durable worker，不静默丢弃已排队任务。
 
+2026-10-05 实施边界补充：1B 提供独立 worker、原子领取、心跳和 checkpoint 写入
+fencing，先开放隔离环境的异步诊断至审批等待。默认 sync 演示不切换；queued 的
+审批恢复及真实写操作待 2A/2B 配套验收后再开放。1B 对已有只读 pending checkpoint
+保守标记 failed/CHECKPOINT_REQUIRES_REVIEW，不声称已经实现 2A 的自动续跑；
+无 checkpoint 的初始输入可在租约过期后有限重新领取。真实 END 和 interrupt 仅修复
+任务投影，不重复 invoke。终态保留输入/检查点，失败不删除事件。
+
 ## 状态进入、退出及证据
 
 下列转换均为设计，状态变化与证据引用持久化；不得只靠前端按钮或进程内锁。

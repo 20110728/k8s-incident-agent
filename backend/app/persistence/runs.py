@@ -120,6 +120,9 @@ class PostgresRunRepository:
         rows = self._read("SELECT * FROM incident_agent_app.runs WHERE incident_id=%s ORDER BY created_at DESC, run_id DESC LIMIT 1", (incident_id,))
         return rows[0] if rows else None
 
+    def worker_available(self) -> bool:
+        return self._read("SELECT EXISTS (SELECT 1 FROM incident_agent_app.workers WHERE expires_at>clock_timestamp()) AS available")[0]["available"]
+
     def accept(self, *, incident_id: str, run_id: str, thread_id: str, payload: dict, key: str | None) -> dict:
         validate_key(key)
         digest = request_digest(payload)
