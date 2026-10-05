@@ -9,19 +9,23 @@ from functools import partial
 from uuid import uuid4
 
 from backend.app.persistence import serialization_security  # strict serde before graph imports
+from langgraph.types import Command
 from backend.app.agent.dependencies import (
     build_kubernetes_collector, build_runbook_retriever,
-    build_diagnosis_service, build_remediation_planner,
+    build_diagnosis_service, build_remediation_planner, build_recovery_verifier,
 )
 from backend.app.agent.graph import build_incident_graph
 from backend.app.persistence.database import connect_database
-from backend.app.persistence.leases import LeaseLost, LeaseRepository
+from backend.app.persistence.leases import LeaseLost
+from backend.app.persistence.operations import OperationRepository
 from backend.app.persistence.migrations import run_migrations
-from backend.app.persistence.runs import QueuedExecutionUnavailable, request_digest
+from backend.app.persistence.runs import request_digest
 from backend.app.persistence.settings import get_database_settings
 from backend.app.runtime.checkpointer import fenced_checkpointer
 from backend.app.runtime.settings import WorkerSettings
 from backend.app.runtime.recovery import classify, transient
+from backend.app.runtime.operations import LedgerExecutor
+from backend.app.tools.client import create_clients
 
 
 def report(event, lease=None):
@@ -45,15 +49,6 @@ class OwnedDependency:
         return call
 
 
-class NoQueuedWrites:
-    """Keep the complete graph topology, but wait for 2B's operation ledger."""
-    def execute(self, *args, **kwargs):
-        raise QueuedExecutionUnavailable()
-
-    def verify(self, *args, **kwargs):
-        raise QueuedExecutionUnavailable()
-
-
 @contextmanager
 def production_graph(settings, repository, lease, lost):
     with fenced_checkpointer(settings, repository, lease, lost) as saver:
@@ -64,16 +59,18 @@ def production_graph(settings, repository, lease, lost):
             retriever=owned(build_runbook_retriever()),
             diagnoser=owned(build_diagnosis_service()),
             planner=owned(build_remediation_planner()),
-            executor=owned(NoQueuedWrites()), verifier=owned(NoQueuedWrites()),
+            executor=owned(LedgerExecutor(create_clients(disable_retries=True), repository, lease, lost)),
+            verifier=owned(build_recovery_verifier()),
             checkpointer=saver,
         )
 
 
 class Worker:
-    def __init__(self, repository, graph_context, settings=None, owner=None):
+    def __init__(self, repository, graph_context, settings=None, owner=None, reconciler=None):
         self.repository, self.graph_context = repository, graph_context
         self.settings = settings or WorkerSettings()
         self.owner = owner or str(uuid4())
+        self.reconciler = reconciler or self._reconcile_operation
         self.stop = threading.Event()
         self.lost = threading.Event()
         self._lease = None
@@ -100,8 +97,40 @@ class Worker:
             self._lease = None
         report(status, lease)
 
+    def _operation(self, lease):
+        # Older read-only test repositories have no ledger; production always does.
+        reader = getattr(self.repository, "operation", None)
+        return reader(lease["run_id"]) if reader else None
+
+    def _reconcile_operation(self, lease, operation):
+        return LedgerExecutor(create_clients(disable_retries=True), self.repository, lease).reconcile(operation)
+
+    def _reconcile_pending(self, lease, *, recovering=False):
+        operation = self._operation(lease)
+        if not operation:
+            return False
+        uncertain = operation["state"] in {"dispatching", "outcome_unknown", "manual_required"}
+        saved_response = (recovering and operation["state"] in {"succeeded", "reconciled"}
+                          and operation["lease_epoch"] != lease["lease_epoch"])
+        if not uncertain and not saved_response:
+            return False
+        self.repository.assert_owned(lease)
+        try:
+            confirmed = self.reconciler(lease, operation)
+        except LeaseLost:
+            raise
+        except Exception:
+            self.repository.record(lease, "manual_required", code="RECONCILIATION_READ_FAILED")
+            confirmed = False
+        if not confirmed or uncertain:
+            self._finish(lease, "reconciling", error_code="OPERATION_MANUAL_REQUIRED")
+            return True
+        return False
+
     def _project(self, lease, snapshot):
-        decision = classify(lease, snapshot)
+        if self._reconcile_pending(lease):
+            return
+        decision = classify(lease, snapshot, self._operation(lease))
         if decision.action != "stop":
             self._finish(lease, "failed", error_code="INCOMPLETE_WORKFLOW")
             return
@@ -112,6 +141,9 @@ class Worker:
         config = {"configurable": {"thread_id": lease["thread_id"]}}
         reading_checkpoint = False
         try:
+            # Recover external effects even if graph/checkpoint/LLM setup fails.
+            if self._reconcile_pending(lease, recovering=True):
+                return
             if lease["workflow_version"] != "incident-v1" or request_digest(lease["input_payload"]) != lease["input_sha256"]:
                 self._finish(lease, "failed", error_code="UNSUPPORTED_OR_CORRUPT_INPUT")
                 return
@@ -120,23 +152,27 @@ class Worker:
                 reading_checkpoint = True
                 snapshot = graph.get_state(config)
                 reading_checkpoint = False
-                decision = classify(lease, snapshot)
+                decision = classify(lease, snapshot, self._operation(lease))
                 if decision.action == "stop":
                     self._project(lease, snapshot)
                     return
                 if lease.get("recovery_only"):
                     self._finish(lease, "failed", error_code="ATTEMPTS_EXHAUSTED")
                     return
-                report("resume_read_only" if decision.action == "continue" else "start", lease)
+                report("resume" if decision.action in {"continue", "resume"} else "start", lease)
                 self.repository.assert_owned(lease)
-                graph.invoke(None if decision.action == "continue" else
-                             {"incident_id": lease["incident_id"], "request": lease["input_payload"]}, config=config)
+                input_value = (Command(resume=lease["approval_payload"]["decision"]) if decision.action == "resume" else
+                               None if decision.action == "continue" else
+                               {"incident_id": lease["incident_id"], "request": lease["input_payload"]})
+                graph.invoke(input_value, config=config)
                 reading_checkpoint = True
                 self._project(lease, graph.get_state(config))
         except LeaseLost:
             report("lease_lost", lease)
         except Exception as error:
             try:
+                if self._reconcile_pending(lease):
+                    return
                 if transient(error) and lease["attempt"] < self.settings.max_attempts:
                     self._finish(lease, "retry_scheduled", error_code="DEPENDENCY_TEMPORARY",
                                  retry_seconds=5 if lease["attempt"] == 1 else 15)
@@ -190,7 +226,7 @@ def main():
     connect = partial(connect_database, database)
     with connect() as connection:
         run_migrations(connection)
-    repository = LeaseRepository(connect)
+    repository = OperationRepository(connect)
     worker = Worker(repository, partial(production_graph, database, repository))
     for signum in (signal.SIGTERM, signal.SIGINT):
         signal.signal(signum, lambda *_: worker.stop.set())

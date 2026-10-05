@@ -7,6 +7,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 from uuid import uuid4
+from backend.app.persistence.operations import approval_binding
 
 from backend.app.persistence.runs import (
     PostgresRunRepository, QueuedModeRequired, QueuedExecutionUnavailable,
@@ -91,7 +92,8 @@ class IncidentSnapshot:
     @property
     def waiting_for_approval(self) -> bool:
         return (
-            self.phase == "awaiting_approval"
+            (self.run is None or self.run["status"] == "waiting_approval")
+            and self.phase == "awaiting_approval"
             and self.state.get("approval_status")
             == "pending"
         )
@@ -380,6 +382,11 @@ class IncidentApplicationService:
             raise RunNotFound()
         return self._runs.list_metadata(**kwargs)
 
+    def list_operations(self, incident_id: str) -> dict:
+        if self._runs is None or self._repository.get(incident_id) is None:
+            raise RunNotFound()
+        return {"items": self._runs.history(incident_id)}
+
     def submit_approval(
         self,
         incident_id: str,
@@ -397,9 +404,16 @@ class IncidentApplicationService:
             ) from error
 
         current = self.get_incident(incident_id)
-        if self._execution_mode == "queued" or current.run is not None:
+        if self._execution_mode == "queued" and current.run is None:
             raise QueuedExecutionUnavailable()
         state = current.state
+        if current.run is not None:
+            row = self._runs.latest(current.incident_id)
+            saved = row.get("approval_payload") if row else None
+            if saved:
+                if saved["decision"] != validated_decision.model_dump(mode="json"):
+                    raise IncidentApprovalConflictError("approval has already been decided differently")
+                return current
         raw_record = state.get("approval_record")
 
         if raw_record is not None:
@@ -467,6 +481,11 @@ class IncidentApplicationService:
             raise IncidentApprovalConflictError(
                 "approval decision does not match the pending request"
             )
+
+        if current.run is not None:
+            self._runs.queue_approval(current.run["run_id"],
+                                      validated_decision.model_dump(mode="json"), approval_binding(state))
+            return self.get_incident(incident_id)
 
         try:
             result = self._graph.invoke(

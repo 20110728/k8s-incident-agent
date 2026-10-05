@@ -98,6 +98,28 @@ def test_readiness_expected_generation_change(setup):
     assert verifier.verify(state).status=='succeeded'
 
 
+def test_journaled_readiness_uses_actual_response_generation(setup):
+    state, bundle, resource, _, verifier = setup
+    state['action_result'].update(action='patch_readiness_probe', after_snapshot={
+        'uid': state['service_profile']['deployment_uid'], 'generation': 9,
+        'resource_version': 'server-assigned'})
+    resource.action = 'patch_readiness_probe'
+    bundle['service_profile']['deployment_generation'] = 9
+    bundle['deployments']['order-service']['generation'] = 9
+    assert verifier.verify(state).status == 'succeeded'
+    state['action_result']['after_snapshot']['generation'] = None
+    assert verifier.verify(state).status == 'failed'
+
+
+def test_journaled_service_recreation_does_not_pass_business_verification(setup):
+    state, bundle, _, _, verifier = setup
+    state['action_result']['after_snapshot'] = {'uid': 'original-service', 'resource_version': '21'}
+    bundle['service']['uid'] = 'replacement-service'
+    assert verifier.verify(state).status == 'failed'
+    bundle['service']['uid'] = 'original-service'
+    assert verifier.verify(state).status == 'succeeded'
+
+
 def test_resource_regression_after_initial_success(setup):
     state,bundle,_,_,verifier=setup
     bundle['deployments']['order-service']['ready_replicas']=0

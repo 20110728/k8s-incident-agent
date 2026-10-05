@@ -286,6 +286,8 @@ class ResourceSnapshot(BaseModel):
     """Minimal non-secret configuration snapshot."""
 
     model_config = ConfigDict(extra="forbid")
+    uid: str | None = None
+    generation: int | None = None
 
     namespace: str = Field(
         min_length=1,

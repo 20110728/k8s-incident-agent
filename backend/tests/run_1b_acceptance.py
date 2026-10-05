@@ -13,10 +13,12 @@ def main():
     environment["INCIDENT_AGENT_TEST_DATABASE_URL"] = isolated_database_url(
         get_database_settings().database_url.get_secret_value(), database,
     )
+    extra = (["backend/tests/agent", "backend/tests/tools", "backend/tests/service_profiles", "backend/tests/business_recovery"]
+             if database.startswith("incident_agent_test_2b_") else [])
     return subprocess.call([
         sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
         "backend/tests/persistence", "backend/tests/api", "backend/tests/runtime",
-    ], env=environment)
+    ] + extra, env=environment)
 
 
 if __name__ == "__main__":

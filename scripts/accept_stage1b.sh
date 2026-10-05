@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 STAGE="${1:-1b}"
-case "$STAGE" in 1b|2a) ;; *) echo 'Unsupported acceptance stage' >&2; exit 2 ;; esac
+case "$STAGE" in 1b|2a|2b) ;; *) echo 'Unsupported acceptance stage' >&2; exit 2 ;; esac
 python -c 'import sys,pytest; assert sys.version_info[:2] == (3,12), "Activate Python 3.12 venv"; import backend.app.runtime.worker'
-if [[ "$STAGE" == 1b ]]; then node --version; npm --version; fi
+if [[ "$STAGE" != 2a ]]; then node --version; npm --version; fi
 PG_CONTAINER="${PG_CONTAINER:-k8s-incident-agent-postgres-1}"
 TEST_DB="incident_agent_test_${STAGE}_$(date -u +%Y%m%d_%H%M%S)_$$"
 AUDIT_DIR="evals/results/$STAGE/$TEST_DB"
@@ -14,7 +14,11 @@ docker exec "$PG_CONTAINER" sh -c 'exec createdb -U "$POSTGRES_USER" "$1"' sh "$
 export INCIDENT_AGENT_TEST_DATABASE_NAME="$TEST_DB"
 python -m backend.tests.run_1b_acceptance 2>&1 | tee "$AUDIT_DIR/backend.txt"
 docker exec "$PG_CONTAINER" sh -c 'exec psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$1" -c "SELECT version,name FROM incident_agent_app.schema_migrations ORDER BY version"' sh "$TEST_DB" | tee "$AUDIT_DIR/migrations.txt"
-if [[ "$STAGE" == 1b ]]; then
+if [[ "$STAGE" != 2a ]]; then
   (cd frontend && npm ci && npm test && npm run build) 2>&1 | tee "$AUDIT_DIR/frontend.txt"
 fi
-printf '\nPASS: %s ECS acceptance. Evidence: %s\nTest databases retained.\n' "${STAGE^^}" "$AUDIT_DIR"
+if [[ "$STAGE" == 2b && "${STAGE2B_KIND:-0}" != 1 ]]; then
+  printf '\nPASS: 2B simulated acceptance only (kind not run). Evidence: %s\n' "$AUDIT_DIR"
+else
+  printf '\nPASS: %s ECS acceptance. Evidence: %s\nTest databases retained.\n' "${STAGE^^}" "$AUDIT_DIR"
+fi

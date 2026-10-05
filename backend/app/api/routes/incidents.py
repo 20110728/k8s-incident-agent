@@ -142,6 +142,11 @@ def list_runs(incident_id: str, service: IncidentServiceDependency,
     return service.list_metadata(incident_id=incident_id, limit=limit, cursor=cursor)
 
 
+@router.get("/{incident_id}/operations")
+def list_operations(incident_id: str, service: IncidentServiceDependency) -> dict:
+    return service.list_operations(incident_id)
+
+
 @router.get(
     "/{incident_id}",
     response_model=IncidentStatusResponse,

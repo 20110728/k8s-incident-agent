@@ -7,6 +7,7 @@ from openai import APIConnectionError, APIStatusError
 from psycopg import OperationalError
 
 from backend.app.persistence.runs import request_digest
+from backend.app.persistence.operations import approval_binding, json_value
 
 
 READ_ONLY_NODES = frozenset({
@@ -18,7 +19,7 @@ READ_ONLY_NODES = frozenset({
 
 @dataclass(frozen=True)
 class RecoveryDecision:
-    action: Literal["start", "continue", "stop"]
+    action: Literal["start", "continue", "resume", "stop"]
     status: str | None = None
     error_code: str | None = None
 
@@ -33,12 +34,12 @@ def transient(error: Exception) -> bool:
     return isinstance(error, APIStatusError) and (error.status_code in {408, 429} or error.status_code >= 500)
 
 
-def classify(lease: dict, snapshot) -> RecoveryDecision:
+def classify(lease: dict, snapshot, operation=None) -> RecoveryDecision:
     stop = lambda status, code=None: RecoveryDecision("stop", status, code)
     if (lease["workflow_version"] != "incident-v1" or
             request_digest(lease["input_payload"]) != lease["input_sha256"]):
         return stop("failed", "UNSUPPORTED_OR_CORRUPT_INPUT")
-    state = snapshot.values or {}
+    state = json_value(snapshot.values or {})
     pending = tuple(snapshot.next or ())
     tasks = tuple(snapshot.tasks or ())
     checkpoint_id = (snapshot.config or {}).get("configurable", {}).get("checkpoint_id")
@@ -50,25 +51,44 @@ def classify(lease: dict, snapshot) -> RecoveryDecision:
         return stop("failed", "CHECKPOINT_IDENTITY_MISMATCH")
     if state.get("request") != lease["input_payload"]:
         return stop("failed", "CHECKPOINT_INPUT_MISMATCH")
-    # Until the operation ledger exists, never replay any potentially written state.
+    saved = lease.get("approval_payload")
+    if saved and (saved.get("binding") != approval_binding(state) or
+                  saved.get("decision", {}).get("approval_id") != (state.get("approval_request") or {}).get("approval_id")):
+        return stop("failed", "APPROVAL_BINDING_MISMATCH")
+    if operation and operation["state"] in {"dispatching", "outcome_unknown", "manual_required"}:
+        return stop("reconciling", "OPERATION_MANUAL_REQUIRED")
+    # Unjournaled legacy writes remain blocked. A durable decision only permits
+    # the registered execution nodes; the executor separately checks its record.
     if (state.get("action_result") is not None or state.get("approved") is True or
             state.get("approval_status") == "approved" or
             any(name in {"execute_remediation", "verify_recovery"} for name in pending)):
-        return stop("reconciling", "WRITE_REQUIRES_RECONCILIATION")
+        if not saved or not saved["decision"].get("approved"):
+            return stop("reconciling", "WRITE_REQUIRES_RECONCILIATION")
+        if (state.get("action_result") is not None or "verify_recovery" in pending) and (
+                not operation or operation["state"] not in {"succeeded", "reconciled", "rejected"} or
+                state.get("action_result") != operation.get("result")):
+            return stop("reconciling", "OPERATION_RESULT_MISMATCH")
     phase = str(state.get("phase") or "unknown")
     if any(getattr(task, "interrupts", ()) for task in tasks):
         if phase == "awaiting_approval" and state.get("approval_status") == "pending":
+            if saved and pending == ("request_human_approval",):
+                return RecoveryDecision("resume")
             return stop("waiting_approval")
         return stop("waiting_user", "NEEDS_INPUT")
     if phase == "failed" or phase.endswith("_failed"):
         return stop("failed", "WORKFLOW_FAILED")
     if not pending:
+        if saved and not saved["decision"].get("approved") and phase == "approval_rejected":
+            return stop("succeeded")
+        if operation and operation["state"] in {"succeeded", "reconciled"} and phase == "verification_succeeded":
+            return stop("succeeded")
         if phase == "remediation_skipped" or (phase == "remediation_planned" and not state.get("requires_approval")):
             return stop("succeeded")
         return stop("failed", "WORKFLOW_FAILED")
-    if not checkpoint_id or not set(pending).issubset(READ_ONLY_NODES):
+    allowed = READ_ONLY_NODES | ({"execute_remediation", "verify_recovery"} if saved and saved["decision"].get("approved") else set())
+    if not checkpoint_id or not set(pending).issubset(allowed):
         return stop("failed", "UNSUPPORTED_PENDING_TASK")
-    if any(getattr(task, "name", None) not in READ_ONLY_NODES for task in tasks):
+    if any(getattr(task, "name", None) not in allowed for task in tasks):
         return stop("failed", "UNSUPPORTED_PENDING_TASK")
     if any(getattr(task, "error", None) for task in tasks):
         if (lease.get("last_error") or {}).get("code") != "DEPENDENCY_TEMPORARY":

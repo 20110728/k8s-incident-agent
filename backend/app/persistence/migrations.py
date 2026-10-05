@@ -184,6 +184,39 @@ MIGRATIONS += (
 )
 
 
+MIGRATIONS += (
+    Migration(6, "operation_ledger", (
+        "ALTER TABLE incident_agent_app.runs ADD COLUMN approval_payload JSONB",
+        """CREATE TABLE incident_agent_app.operations (
+            operation_id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL UNIQUE REFERENCES incident_agent_app.runs(run_id),
+            incident_id TEXT NOT NULL REFERENCES incident_agent_app.incidents(incident_id),
+            approval_id TEXT NOT NULL,
+            plan_revision TEXT NOT NULL,
+            plan_snapshot JSONB NOT NULL,
+            approval_snapshot JSONB NOT NULL,
+            action TEXT NOT NULL CHECK (action IN ('patch_service_selector','patch_readiness_probe')),
+            state TEXT NOT NULL CHECK (state IN ('prepared','dispatching','succeeded','rejected','outcome_unknown','reconciled','manual_required')),
+            lease_epoch BIGINT NOT NULL,
+            before_snapshot JSONB NOT NULL,
+            target_snapshot JSONB NOT NULL,
+            request_patch JSONB NOT NULL,
+            response_snapshot JSONB,
+            observed_snapshot JSONB,
+            result JSONB,
+            attribution TEXT NOT NULL DEFAULT 'not_established' CHECK (attribution IN ('confirmed','not_established')),
+            error_code TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+            dispatched_at TIMESTAMPTZ,
+            responded_at TIMESTAMPTZ,
+            reconciled_at TIMESTAMPTZ,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+        )""",
+        "CREATE INDEX operations_incident_idx ON incident_agent_app.operations (incident_id,created_at)",
+    )),
+)
+
+
 def run_migrations(
     connection: MigrationConnectionPort,
 ) -> list[int]:

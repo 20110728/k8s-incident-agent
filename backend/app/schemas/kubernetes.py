@@ -11,6 +11,8 @@ class ServicePortInfo(BaseModel):
 
 
 class ServiceInfo(BaseModel):
+    uid: str | None = None
+    resource_version: str | None = None
     namespace: str
     name: str
     service_type: str

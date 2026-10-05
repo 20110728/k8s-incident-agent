@@ -5,9 +5,9 @@ import threading
 import pytest
 
 from backend.app.persistence.leases import LeaseLost
-from backend.app.persistence.runs import request_digest, QueuedExecutionUnavailable
+from backend.app.persistence.runs import request_digest
 from backend.app.runtime.settings import WorkerSettings
-from backend.app.runtime.worker import Worker, NoQueuedWrites, OwnedDependency
+from backend.app.runtime.worker import Worker, OwnedDependency
 
 
 class Repository:
@@ -63,8 +63,6 @@ def test_stale_worker_cannot_even_enter_write_dependency():
     lost.set()
     with pytest.raises(LeaseLost):
         OwnedDependency(Tool(), Repository(), lease(), lost).execute()
-    with pytest.raises(QueuedExecutionUnavailable):
-        NoQueuedWrites().execute()
 
 
 def test_heartbeat_failure_never_resumes_renewal_of_same_lease():

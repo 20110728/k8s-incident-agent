@@ -39,6 +39,8 @@ def get_service(
     ]
 
     return ServiceInfo(
+        uid=getattr(service.metadata, "uid", None),
+        resource_version=getattr(service.metadata, "resource_version", None),
         namespace=namespace,
         name=service.metadata.name,
         service_type=service.spec.type,

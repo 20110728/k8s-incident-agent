@@ -7,6 +7,7 @@ from functools import partial
 from fastapi import Request
 from backend.app.config import get_api_settings
 from backend.app.persistence.runs import PostgresRunRepository, QueuedExecutionUnavailable
+from backend.app.persistence.operations import OperationRepository
 
 from backend.app.agent.dependencies import (
     build_diagnosis_service,
@@ -108,7 +109,7 @@ def incident_service_context(*, execution_mode: str | None = None) -> (
         yield build_incident_service(
             checkpointer=checkpointer,
             repository=repository,
-            runs=PostgresRunRepository(connection_factory),
+            runs=OperationRepository(connection_factory),
             execution_mode=execution_mode or get_api_settings().execution_mode,
         )
 

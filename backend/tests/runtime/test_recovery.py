@@ -5,6 +5,7 @@ import pytest
 from psycopg.errors import InvalidPassword
 
 from backend.app.runtime.recovery import classify, transient
+from backend.app.persistence.operations import approval_binding
 from backend.tests.runtime.test_worker_contracts import lease
 
 
@@ -56,3 +57,25 @@ def test_terminal_failure_and_unknown_task_errors_are_not_retried():
 ])
 def test_error_classification(error, expected):
     assert transient(error) is expected
+
+
+def test_approval_resume_requires_durable_bound_decision_and_correct_interrupt():
+    task = Snapshot(name="request_human_approval", interrupts=("approval",), error=None)
+    saved = snapshot(phase="awaiting_approval", approval_status="pending", approval_request={"approval_id": "apr-test"},
+                     pending=("request_human_approval",), tasks=(task,))
+    row = {**lease(), "approval_payload": {"binding": approval_binding(saved.values),
+                                           "decision": {"approval_id": "apr-test", "approved": True}}}
+    assert classify(row, saved).action == "resume"
+    saved.values["evidence"] = [{"changed": True}]
+    assert classify(row, saved).error_code == "APPROVAL_BINDING_MISMATCH"
+
+
+def test_ledger_result_must_match_checkpoint_before_verification():
+    saved = snapshot(phase="remediation_executed", pending=("verify_recovery",), approved=True,
+                     approval_request={"approval_id": "apr-test"}, action_result={"status": "succeeded"})
+    row = {**lease(), "approval_payload": {"binding": approval_binding(saved.values),
+                                           "decision": {"approval_id": "apr-test", "approved": True}}}
+    assert classify(row, saved).status == "reconciling"
+    operation = {"state": "succeeded", "result": {"status": "succeeded"}}
+    assert classify(row, saved, operation).action == "continue"
+    assert classify(row, saved, {**operation, "state": "outcome_unknown"}).status == "reconciling"

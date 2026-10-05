@@ -582,8 +582,10 @@ function App() {
                   </dl>
 
                   <p className="incident-note">
-                    {incident.run?.status === 'waiting_approval'
-                      ? '诊断和方案已保存。本阶段的排队任务暂不支持审批执行，请等待后续功能开放。'
+                    {incident.run?.status === 'reconciling'
+                      ? '写入结果需要人工核对。系统已停止自动写入，请勿通过重复提交事件尝试补写。'
+                      : incident.run?.status === 'waiting_approval'
+                      ? '诊断和方案已保存。提交审批后，由 worker 执行并记录操作结果。'
                       : incident.run && incident.worker_available === false
                       ? '任务已保存，当前没有在线 worker。可凭事件 ID 找回任务。'
                       : '事件响应已保存，可查看下方诊断证据和处置结果。'}
@@ -613,7 +615,7 @@ function App() {
             </>
           )}
 
-          {incident && !incident.run && (
+          {incident && (
             <ApprovalDecisionPanel
               incident={incident}
               submitting={

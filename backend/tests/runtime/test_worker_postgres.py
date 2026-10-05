@@ -19,6 +19,7 @@ from psycopg.rows import dict_row
 from backend.app.agent.state import IncidentState
 from backend.app.persistence.checkpointer import postgres_checkpointer
 from backend.app.persistence.leases import LeaseLost, LeaseRepository
+from backend.app.persistence.operations import OperationRepository
 from backend.app.persistence.incidents import PostgresIncidentRepository
 from backend.app.persistence.migrations import run_migrations
 from backend.app.persistence.settings import DatabaseSettings
@@ -38,7 +39,7 @@ def storage():
     if not source:
         pytest.skip("requires isolated ECS PostgreSQL acceptance")
     assert conninfo_to_dict(source)["dbname"].startswith("incident_agent_test_")
-    stage = "2a" if conninfo_to_dict(source)["dbname"].startswith("incident_agent_test_2a_") else "1b"
+    stage = conninfo_to_dict(source)["dbname"].split("_")[3]
     name = "incident_agent_test_" + stage + "_" + uuid4().hex
     with psycopg.connect(source, autocommit=True) as admin:
         admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
@@ -50,7 +51,7 @@ def storage():
         run_migrations(connection)
     with postgres_checkpointer(settings):
         pass
-    return connect, LeaseRepository(connect), settings
+    return connect, OperationRepository(connect), settings
 
 
 def accept(repo):
