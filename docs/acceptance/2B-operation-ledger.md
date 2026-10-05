@@ -20,3 +20,5 @@ bash scripts/accept_stage2b.sh
 旧 queued 审批如果缺少 Service UID，会拒绝执行，不能补填 UID 后复用原审批；需重新创建事件取证和审批。
 
 本地 Python AST（176 个文件）、新增模块内部导入符号、Bash 语法、Git diff 检查通过；未执行 pytest/npm 或集群操作。待验证：ECS 全部动态结果；真实模型/业务闭环、受限身份和独立进程精确 kill 窗口。kind 用例是实际 Service PATCH + PostgreSQL，登记画像使用测试快照，不等于验证生产画像/RBAC；更完整恢复故障工具留在 2C。
+
+复验修正：首次 ECS 日志为 415 passed / 29 failed，失败来自 5 个旧诊断/规划/profile 测试文件，其样例与当前诊断契约不一致。验收入口误纳入整个旧目录，现明确限定为全部 persistence/API/runtime（含 2B 数据库和 kind）及审批、执行、业务验证相关回归；不改生产校验、不删除或标记跳过旧测试。29 项旧测试适配仍未解决，不宣称全仓测试通过。仅修改验收入口，无新增迁移、依赖、配置或重启要求；拉取后重跑同一命令，前端在后端测试通过后继续验收。
