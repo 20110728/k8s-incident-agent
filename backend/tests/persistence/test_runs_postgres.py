@@ -8,7 +8,6 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from functools import partial
 from threading import Barrier, Lock
 from uuid import uuid4
 
@@ -40,7 +39,9 @@ def connect():
     if not dsn:
         pytest.skip("set INCIDENT_AGENT_TEST_DATABASE_URL to run real PostgreSQL acceptance")
     assert conninfo_to_dict(dsn).get("dbname", "").startswith("incident_agent_test_"), "Dedicated test database required"
-    factory = partial(psycopg.connect, dsn, row_factory=dict_row, connect_timeout=5)
+    # functools.partial repr exposes its DSN in pytest's fixture traceback.
+    def factory():
+        return psycopg.connect(dsn, row_factory=dict_row, connect_timeout=5)
     with factory() as connection:
         run_migrations(connection)
     return factory

@@ -91,3 +91,18 @@ ECS 运行测试、真实 PostgreSQL 并发/事务、真实 checkpoint、前端�
 旧数据兼容用例使用合成历史样本；用户原来的真实旧事件仍缺少 ID，不能宣称已验证。
 本块没有 worker、租约领取、kill 后继续执行或新的聊天界面；1B 验收前 queued 只保存不执行。
 下一次只在收到 1A 验收结果后推进 1B。
+
+## 2026-10-05 首次 ECS 反馈及修复
+
+维护者在 250d241 执行后反馈：136 passed、2 failed。失败均来自验收入口
+使用 make_conninfo 后产生关键字 DSN，而应用的数据库/checkpointer 入口要求 URL。
+脚本在后端失败处停止，前端测试和构建尚未执行；顶部 422 弃用警告不是本次失败原因。
+
+修复仅涉及验收入口及测试：保持 PostgreSQL URL 格式，只替换测试库名，移除可能
+覆盖库名的 query dbname；保留编码后的账号密码及连接选项。增加 URL 回归用例，
+将携带 DSN 的 partial 测试连接工厂换成普通函数，避免 fixture repr 显示连接密码。
+本地只执行 Python AST 与 git diff --check 静态检查，运行结果仍需 ECS 复验。
+无需新增依赖、修改配置、迁移演示库或重启容器。
+
+拉取修复后重新执行 `bash scripts/accept_stage1a.sh`。仍自动新建独立测试库；
+预期后端无失败，继续完成前端测试与构建，最后显示 `PASS: 1A ECS acceptance`。
