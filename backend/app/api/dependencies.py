@@ -5,6 +5,8 @@ from contextlib import contextmanager
 from functools import partial
 
 from fastapi import Request
+from backend.app.config import get_api_settings
+from backend.app.persistence.runs import PostgresRunRepository, QueuedExecutionUnavailable
 
 from backend.app.agent.dependencies import (
     build_diagnosis_service,
@@ -36,7 +38,19 @@ def build_incident_service(
     *,
     checkpointer: object,
     repository: IncidentRepositoryPort,
+    runs: PostgresRunRepository | None = None,
+    execution_mode: str = "sync",
 ) -> IncidentApplicationService:
+    if execution_mode == "queued":
+        disabled = _DisabledWorkflowDependency()
+        graph = build_incident_graph(
+            collector=disabled, retriever=disabled, diagnoser=disabled,
+            planner=disabled, executor=disabled, verifier=disabled,
+            checkpointer=checkpointer,
+        )
+        return IncidentApplicationService(
+            _ReadOnlyGraph(graph), repository, runs=runs, execution_mode=execution_mode,
+        )
     graph = build_incident_graph(
         collector=build_kubernetes_collector(),
         retriever=build_runbook_retriever(),
@@ -50,11 +64,31 @@ def build_incident_service(
     return IncidentApplicationService(
         graph,
         repository,
+        runs=runs,
+        execution_mode=execution_mode,
     )
 
 
+class _DisabledWorkflowDependency:
+    def __getattr__(self, name):
+        def unavailable(*args, **kwargs):
+            raise QueuedExecutionUnavailable()
+        return unavailable
+
+
+class _ReadOnlyGraph:
+    def __init__(self, graph):
+        self._graph = graph
+
+    def get_state(self, config):
+        return self._graph.get_state(config)
+
+    def invoke(self, *args, **kwargs):
+        raise QueuedExecutionUnavailable()
+
+
 @contextmanager
-def incident_service_context() -> (
+def incident_service_context(*, execution_mode: str | None = None) -> (
     Iterator[IncidentApplicationService]
 ):
     settings = get_database_settings()
@@ -74,6 +108,8 @@ def incident_service_context() -> (
         yield build_incident_service(
             checkpointer=checkpointer,
             repository=repository,
+            runs=PostgresRunRepository(connection_factory),
+            execution_mode=execution_mode or get_api_settings().execution_mode,
         )
 
 

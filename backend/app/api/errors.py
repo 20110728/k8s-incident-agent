@@ -1,4 +1,5 @@
 from typing import Any
+from backend.app.persistence.runs import RunError
 
 from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
@@ -56,6 +57,10 @@ def _error_response(
 def register_exception_handlers(
     app: FastAPI,
 ) -> None:
+    @app.exception_handler(RunError)
+    async def handle_run_error(request: Request, error: RunError) -> JSONResponse:
+        return _error_response(status_code=error.status_code, code=error.code, message=error.message)
+
     @app.exception_handler(ApiError)
     async def handle_api_error(
         request: Request,

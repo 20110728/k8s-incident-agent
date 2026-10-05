@@ -1,4 +1,5 @@
 from typing import Any, Literal
+from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -43,8 +44,24 @@ class CreateIncidentRequest(IncidentRequest):
 class SubmitApprovalRequest(ApprovalDecision):
     """Strict HTTP payload used to resume a pending approval."""
 
+class RunSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    run_id: str
+    status: Literal["queued", "running", "waiting_user", "waiting_approval", "retry_scheduled", "reconciling", "succeeded", "failed", "cancelled"]
+    run_kind: Literal["diagnosis"]
+    created_at: datetime
+    updated_at: datetime
+    finished_at: datetime | None
+    attempt: int = Field(ge=0)
+    last_error_code: str | None
+
+
 class IncidentStatusResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+    run: RunSummary | None = None
+    execution_mode: Literal["sync", "queued"] = "sync"
+    worker_available: bool = False
 
     incident_id: str = Field(min_length=1)
     thread_id: str = Field(min_length=1)

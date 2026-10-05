@@ -572,8 +572,9 @@ function App() {
                   </dl>
 
                   <p className="incident-note">
-                    创建响应已保存。状态轮询、诊断证据和
-                    Runbook 详情将在下一阶段接入。
+                    {incident.run && incident.worker_available === false
+                      ? '任务已保存，当前环境尚未启用后台执行。可凭事件 ID 找回任务。'
+                      : '事件响应已保存，可查看下方诊断证据和处置结果。'}
                   </p>
                 </>
               ) : (

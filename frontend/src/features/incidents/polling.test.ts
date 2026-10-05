@@ -74,6 +74,17 @@ afterEach(() => {
 })
 
 describe('incident polling', () => {
+  it('does not poll a saved task when no worker is available', () => {
+    const incident = buildIncident('created')
+    incident.worker_available = false
+    incident.execution_mode = 'queued'
+    incident.run = {
+      run_id: 'run-1', status: 'queued', run_kind: 'diagnosis',
+      created_at: '2026-10-05T00:00:00Z', updated_at: '2026-10-05T00:00:00Z',
+      finished_at: null, attempt: 0, last_error_code: null,
+    }
+    expect(shouldContinueIncidentPolling(incident)).toBe(false)
+  })
   it('continues only for known active phases', () => {
     expect(
       shouldContinueIncidentPolling(

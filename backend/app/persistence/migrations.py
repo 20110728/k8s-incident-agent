@@ -115,6 +115,48 @@ MIGRATIONS = (
                 ON incident_agent_app.rechecks (incident_id, sequence DESC)""",
         ),
     ),
+    Migration(
+        version=3,
+        name="create_runs",
+        statements=(
+            """CREATE TABLE incident_agent_app.runs (
+                run_id TEXT PRIMARY KEY,
+                incident_id TEXT NOT NULL REFERENCES incident_agent_app.incidents(incident_id),
+                thread_id TEXT NOT NULL UNIQUE,
+                run_kind TEXT NOT NULL DEFAULT 'diagnosis' CHECK (run_kind = 'diagnosis'),
+                parent_run_id TEXT REFERENCES incident_agent_app.runs(run_id),
+                input_revision INTEGER NOT NULL DEFAULT 1 CHECK (input_revision >= 1),
+                input_payload JSONB NOT NULL CHECK (jsonb_typeof(input_payload) = 'object'),
+                input_sha256 TEXT NOT NULL CHECK (input_sha256 ~ '^[0-9a-f]{64}$'),
+                workflow_version TEXT NOT NULL DEFAULT 'incident-v1',
+                idempotency_scope TEXT,
+                idempotency_key TEXT,
+                request_sha256 TEXT NOT NULL CHECK (request_sha256 ~ '^[0-9a-f]{64}$'),
+                status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN (
+                    'queued','running','waiting_user','waiting_approval',
+                    'retry_scheduled','reconciling','succeeded','failed','cancelled')),
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                finished_at TIMESTAMPTZ,
+                last_error JSONB,
+                attempt INTEGER NOT NULL DEFAULT 0 CHECK (attempt >= 0),
+                lease_owner TEXT,
+                lease_epoch BIGINT NOT NULL DEFAULT 0 CHECK (lease_epoch >= 0),
+                lease_expires_at TIMESTAMPTZ,
+                heartbeat_at TIMESTAMPTZ,
+                next_retry_at TIMESTAMPTZ,
+                CONSTRAINT runs_idempotency_pair CHECK (
+                    (idempotency_scope IS NULL AND idempotency_key IS NULL) OR
+                    (idempotency_scope IS NOT NULL AND idempotency_key IS NOT NULL)),
+                CONSTRAINT runs_idempotency_unique UNIQUE (idempotency_scope,idempotency_key)
+            )""",
+            """CREATE UNIQUE INDEX runs_one_active_per_incident
+                ON incident_agent_app.runs (incident_id)
+                WHERE status IN ('queued','running','waiting_user','waiting_approval','retry_scheduled','reconciling')""",
+            """CREATE INDEX runs_incident_created_idx ON incident_agent_app.runs
+                (incident_id, created_at DESC, run_id DESC)""",
+        ),
+    ),
 )
 
 
@@ -127,6 +169,8 @@ def run_migrations(
 
     with connection.transaction():
         with connection.cursor() as cursor:
+            # Serialize application migrations across simultaneous API starts.
+            cursor.execute("SELECT pg_advisory_xact_lock(734219801)")
             cursor.execute(
                 "CREATE SCHEMA IF NOT EXISTS "
                 f"{APP_SCHEMA}"

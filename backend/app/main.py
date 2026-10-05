@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from functools import partial
 from contextlib import (
     AbstractContextManager,
     asynccontextmanager,
@@ -71,7 +72,7 @@ def create_app(
 
         factory = (
             service_context_factory
-            or incident_service_context
+            or partial(incident_service_context, execution_mode=resolved_settings.execution_mode)
         )
         application.state.ready = False
 
@@ -119,6 +120,7 @@ def create_app(
             allow_headers=[
                 "Accept",
                 "Content-Type",
+                "Idempotency-Key",
             ],
             max_age=600,
         )

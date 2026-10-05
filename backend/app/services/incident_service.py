@@ -8,6 +8,11 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 from uuid import uuid4
 
+from backend.app.persistence.runs import (
+    PostgresRunRepository, QueuedModeRequired, QueuedExecutionUnavailable,
+    RunNotFound, run_summary, validate_key,
+)
+
 from langgraph.types import Command
 from pydantic import BaseModel, ValidationError
 
@@ -74,6 +79,9 @@ class IncidentSnapshot:
     incident_id: str
     thread_id: str
     state: dict[str, Any]
+    run: dict[str, Any] | None = None
+    execution_mode: str = "sync"
+    worker_available: bool = False
 
     @property
     def phase(self) -> str:
@@ -155,6 +163,8 @@ class IncidentApplicationService:
         repository: IncidentRepositoryPort | None = None,
         *,
         id_factory: Callable[[], str] = _new_id,
+        runs: PostgresRunRepository | None = None,
+        execution_mode: str = "sync",
     ) -> None:
         self._graph = graph
         self._repository = (
@@ -163,6 +173,10 @@ class IncidentApplicationService:
             else InMemoryIncidentRepository()
         )
         self._id_factory = id_factory
+        self._runs = runs
+        self._execution_mode = execution_mode
+        if execution_mode not in {"sync", "queued"} or (execution_mode == "queued" and runs is None):
+            raise ValueError("queued mode requires a durable run repository")
 
     def _delete_failed_incident(
         self,
@@ -176,10 +190,21 @@ class IncidentApplicationService:
     def create_incident(
         self,
         request: IncidentRequest,
+        *,
+        idempotency_key: str | None = None,
     ) -> IncidentSnapshot:
         validated_request = (
             IncidentRequest.model_validate(request)
         )
+        validate_key(idempotency_key)
+        if self._execution_mode == "queued":
+            row = self._runs.accept(
+                incident_id=self._id_factory(), run_id=_new_id(), thread_id=_new_id(),
+                payload=validated_request.model_dump(mode="json"), key=idempotency_key,
+            )
+            return self._snapshot_for_run(row)
+        if idempotency_key is not None:
+            raise QueuedModeRequired()
         incident_id = self._id_factory().strip()
 
         if not incident_id:
@@ -286,6 +311,10 @@ class IncidentApplicationService:
                 f"incident {normalized_id!r} was not found"
             )
 
+        run = self._runs.latest(normalized_id) if self._runs is not None else None
+        if run is not None:
+            return self._snapshot_for_run(run)
+
         try:
             snapshot = self._graph.get_state(
                 _graph_config(record.thread_id)
@@ -315,7 +344,35 @@ class IncidentApplicationService:
             incident_id=normalized_id,
             thread_id=record.thread_id,
             state=state,
+            execution_mode=self._execution_mode,
         )
+
+    def _snapshot_for_run(self, row: dict) -> IncidentSnapshot:
+        if row["status"] == "queued" and row["attempt"] == 0:
+            state = {"incident_id": row["incident_id"], "request": row["input_payload"], "phase": "created"}
+        else:
+            try:
+                values = self._graph.get_state(_graph_config(row["thread_id"])).values
+                if not isinstance(values, Mapping) or not values:
+                    raise IncidentGraphError("executed run checkpoint is missing")
+                state = _normalize_state(values, incident_id=row["incident_id"])
+            except IncidentGraphError:
+                raise
+            except Exception as error:
+                raise IncidentGraphError("run checkpoint lookup failed") from error
+        return IncidentSnapshot(row["incident_id"], row["thread_id"], state,
+                                run=run_summary(row), execution_mode=self._execution_mode)
+
+    def get_by_idempotency_key(self, key: str) -> IncidentSnapshot:
+        row = self._runs.by_key(key) if self._runs is not None else None
+        if row is None:
+            raise RunNotFound()
+        return self._snapshot_for_run(row)
+
+    def list_metadata(self, **kwargs) -> dict:
+        if self._runs is None:
+            raise RunNotFound()
+        return self._runs.list_metadata(**kwargs)
 
     def submit_approval(
         self,
@@ -334,6 +391,8 @@ class IncidentApplicationService:
             ) from error
 
         current = self.get_incident(incident_id)
+        if self._execution_mode == "queued" or current.run is not None:
+            raise QueuedExecutionUnavailable()
         state = current.state
         raw_record = state.get("approval_record")
 

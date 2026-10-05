@@ -12,11 +12,12 @@ def test_run_migrations_applies_pending_version() -> None:
 
     applied = run_migrations(connection)
 
-    assert applied == [1, 2]
+    assert applied == [1, 2, 3]
     assert connection.transaction_value.enter_count == 1
     assert connection.transaction_value.exit_count == 1
 
-    calls = connection.cursor_value.calls
+    assert "pg_advisory_xact_lock" in connection.cursor_value.calls[0]["query"]
+    calls = connection.cursor_value.calls[1:]
     assert "CREATE SCHEMA IF NOT EXISTS" in calls[0]["query"]
     assert "schema_migrations" in calls[1]["query"]
     assert "SELECT version" in calls[2]["query"]
@@ -34,18 +35,27 @@ def test_run_migrations_applies_pending_version() -> None:
 
 def test_run_migrations_skips_applied_version() -> None:
     connection = FakeMigrationConnection(
-        applied_versions=[1, 2]
+        applied_versions=[1, 2, 3]
     )
 
     applied = run_migrations(connection)
 
     assert applied == []
-    assert len(connection.cursor_value.calls) == 3
+    assert len(connection.cursor_value.calls) == 4
 
 
 def test_existing_database_adds_rechecks_without_recreating_incidents():
     connection = FakeMigrationConnection(applied_versions=[1])
-    assert run_migrations(connection) == [2]
+    assert run_migrations(connection) == [2, 3]
     queries = [call['query'] for call in connection.cursor_value.calls]
     assert any('CREATE TABLE incident_agent_app.rechecks' in query for query in queries)
     assert not any('CREATE TABLE incident_agent_app.incidents' in query for query in queries)
+
+
+def test_version_two_only_adds_runs():
+    connection = FakeMigrationConnection(applied_versions=[1, 2])
+    assert run_migrations(connection) == [3]
+    queries = [call['query'] for call in connection.cursor_value.calls]
+    assert any('CREATE TABLE incident_agent_app.runs' in query for query in queries)
+    assert not any('CREATE TABLE incident_agent_app.incidents' in query for query in queries)
+    assert not any('CREATE TABLE incident_agent_app.rechecks' in query for query in queries)

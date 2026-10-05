@@ -21,6 +21,9 @@ const POLLING_PHASES = new Set([
 export function shouldContinueIncidentPolling(
   incident: IncidentStatusResponse,
 ): boolean {
+  if (incident.run && incident.worker_available === false) {
+    return false
+  }
   if (incident.waiting_for_approval) {
     return false
   }

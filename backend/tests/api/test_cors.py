@@ -54,7 +54,7 @@ def test_incident_preflight_is_allowed() -> None:
                     "POST"
                 ),
                 "Access-Control-Request-Headers": (
-                    "content-type"
+                    "content-type,idempotency-key"
                 ),
             },
         )
@@ -76,6 +76,7 @@ def test_incident_preflight_is_allowed() -> None:
         "access-control-allow-headers"
     ].lower()
     assert "content-type" in allowed_headers
+    assert "idempotency-key" in allowed_headers
 
 
 def test_disallowed_origin_is_not_authorized() -> None:

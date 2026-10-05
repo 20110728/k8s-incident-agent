@@ -256,6 +256,18 @@ export interface IncidentError {
 }
 
 export interface IncidentStatusResponse {
+  execution_mode?: 'sync' | 'queued'
+  worker_available?: boolean
+  run?: {
+    run_id: string
+    status: string
+    run_kind: string
+    created_at: string
+    updated_at: string
+    finished_at: string | null
+    attempt: number
+    last_error_code: string | null
+  } | null
   llm_debug?: JsonObject
   incident_id: string
   thread_id: string

@@ -3,6 +3,8 @@ from typing import Annotated
 from fastapi import (
     APIRouter,
     Depends,
+    Header,
+    Query,
     Path,
     status,
 )
@@ -15,6 +17,7 @@ from backend.app.api.schemas import (
     CreateIncidentRequest,
     ErrorResponse,
     IncidentStatusResponse,
+    RunSummary,
     SubmitApprovalRequest,
 )
 from backend.app.services.incident_service import (
@@ -42,7 +45,7 @@ IncidentServiceDependency = Annotated[
 def _response_from_snapshot(
     snapshot: IncidentSnapshot,
 ) -> IncidentStatusResponse:
-    return IncidentStatusResponse.from_state(
+    response = IncidentStatusResponse.from_state(
         incident_id=snapshot.incident_id,
         thread_id=snapshot.thread_id,
         state=snapshot.state,
@@ -50,6 +53,10 @@ def _response_from_snapshot(
             snapshot.waiting_for_approval
         ),
     )
+    response.run = RunSummary.model_validate(snapshot.run) if snapshot.run is not None else None
+    response.execution_mode = snapshot.execution_mode
+    response.worker_available = snapshot.worker_available
+    return response
 
 
 def _raise_graph_error(
@@ -83,18 +90,20 @@ def _raise_graph_error(
             "description": "The workflow dependency failed.",
         },
     },
-    summary="Create and start an incident",
+    summary="Create an incident in the configured execution mode",
     description=(
-        "Creates an incident and runs its LangGraph workflow "
-        "until a terminal state or human-approval interrupt."
+        "Queued mode commits the incident and run without executing a workflow. "
+        "Sync mode runs the legacy workflow and rejects idempotency keys."
     ),
 )
 def create_incident(
     request: CreateIncidentRequest,
     service: IncidentServiceDependency,
+    idempotency_key: Annotated[str | None, Header(pattern=r"^[A-Za-z0-9._:-]{1,128}$", min_length=1, max_length=128)] = None,
 ) -> IncidentStatusResponse:
     try:
-        snapshot = service.create_incident(request)
+        snapshot = (service.create_incident(request) if idempotency_key is None else
+                    service.create_incident(request, idempotency_key=idempotency_key))
 
     except IncidentGraphError as error:
         _raise_graph_error(error)
@@ -109,6 +118,28 @@ def create_incident(
         ) from error
 
     return _response_from_snapshot(snapshot)
+
+
+@router.get("")
+def list_incidents(service: IncidentServiceDependency,
+                   limit: Annotated[int, Query(ge=1, le=50)] = 20,
+                   cursor: str | None = None) -> dict:
+    return service.list_metadata(limit=limit, cursor=cursor)
+
+
+@router.get("/by-idempotency-key/{key}", response_model=IncidentStatusResponse)
+def find_by_key(key: str, service: IncidentServiceDependency) -> IncidentStatusResponse:
+    try:
+        return _response_from_snapshot(service.get_by_idempotency_key(key))
+    except IncidentGraphError as error:
+        _raise_graph_error(error)
+
+
+@router.get("/{incident_id}/runs")
+def list_runs(incident_id: str, service: IncidentServiceDependency,
+              limit: Annotated[int, Query(ge=1, le=50)] = 20,
+              cursor: str | None = None) -> dict:
+    return service.list_metadata(incident_id=incident_id, limit=limit, cursor=cursor)
 
 
 @router.get(
