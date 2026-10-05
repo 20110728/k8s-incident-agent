@@ -176,6 +176,14 @@ MIGRATIONS += (
 )
 
 
+MIGRATIONS += (
+    Migration(5, "checkpoint_start_marker", (
+        "ALTER TABLE incident_agent_app.runs ADD COLUMN checkpoint_started BOOLEAN NOT NULL DEFAULT FALSE",
+        "UPDATE incident_agent_app.runs SET checkpoint_started=TRUE WHERE attempt>0",
+    )),
+)
+
+
 def run_migrations(
     connection: MigrationConnectionPort,
 ) -> list[int]:

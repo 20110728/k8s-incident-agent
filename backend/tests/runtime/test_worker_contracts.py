@@ -50,7 +50,7 @@ def test_transient_error_is_bounded_and_does_not_delete_task():
 
 def test_business_failed_end_is_not_automatically_retried():
     repo = Repository()
-    snapshot = SimpleNamespace(values={"incident_id": "incident", "phase": "diagnosis_failed"}, next=(), tasks=())
+    snapshot = SimpleNamespace(values={"incident_id": "incident", "request": lease()["input_payload"], "phase": "diagnosis_failed"}, next=(), tasks=(), config={})
     Worker(repo, None)._project(lease(), snapshot)
     assert repo.results == [("failed", {"phase": "diagnosis_failed", "error_code": "WORKFLOW_FAILED"})]
 

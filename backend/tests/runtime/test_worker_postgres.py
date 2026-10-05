@@ -38,7 +38,8 @@ def storage():
     if not source:
         pytest.skip("requires isolated ECS PostgreSQL acceptance")
     assert conninfo_to_dict(source)["dbname"].startswith("incident_agent_test_")
-    name = "incident_agent_test_1b_" + uuid4().hex
+    stage = "2a" if conninfo_to_dict(source)["dbname"].startswith("incident_agent_test_2a_") else "1b"
+    name = "incident_agent_test_" + stage + "_" + uuid4().hex
     with psycopg.connect(source, autocommit=True) as admin:
         admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
     dsn = isolated_database_url(source, name)
@@ -183,7 +184,9 @@ def test_attempt_budget_and_retry_not_before_due_time(storage):
     third = repo.claim("three", 30)
     assert third["attempt"] == 3
     expire(connect, row["run_id"])
-    assert repo.claim("four", 30) is None
+    exhausted = repo.claim("four", 30)
+    assert exhausted["recovery_only"] and exhausted["attempt"] == 3
+    Worker(repo, graph_context(storage), short_settings()).execute(exhausted)
     result = repo.latest(row["incident_id"])
     assert result["status"] == "failed" and result["last_error"]["code"] == "ATTEMPTS_EXHAUSTED"
 
@@ -202,7 +205,7 @@ def test_saved_pending_checkpoint_is_not_blindly_replayed(storage):
     worker.run(once=True)
     result = repo.latest(row["incident_id"])
     assert result["status"] == "failed"
-    assert result["last_error"]["code"] == "CHECKPOINT_REQUIRES_REVIEW"
+    assert result["last_error"]["code"] == "UNSUPPORTED_PENDING_TASK"
 
 
 def test_killed_process_lease_expires_and_task_is_found(storage):

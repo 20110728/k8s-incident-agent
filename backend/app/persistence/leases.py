@@ -32,17 +32,16 @@ class LeaseRepository(PostgresRunRepository):
                     ORDER BY created_at,run_id LIMIT 1 FOR UPDATE SKIP LOCKED""").fetchone()
                 if row is None:
                     return None
-                if row["attempt"] >= max_attempts:
-                    connection.execute("""UPDATE incident_agent_app.runs SET status='failed',
-                        last_error='{"code":"ATTEMPTS_EXHAUSTED"}'::jsonb,
-                        finished_at=clock_timestamp(),updated_at=clock_timestamp(),
-                        lease_owner=NULL,lease_expires_at=NULL WHERE run_id=%s""", (row["run_id"],))
-                    return None
-                return connection.execute("""UPDATE incident_agent_app.runs SET
-                    status='running',lease_owner=%s,lease_epoch=lease_epoch+1,attempt=attempt+1,
+                recovery_only = row["attempt"] >= max_attempts
+                claimed = connection.execute("""UPDATE incident_agent_app.runs SET
+                    status='running',lease_owner=%s,lease_epoch=lease_epoch+1,attempt=attempt+%s,
                     heartbeat_at=clock_timestamp(),lease_expires_at=clock_timestamp()+%s*interval '1 second',
                     updated_at=clock_timestamp(),next_retry_at=NULL
-                    WHERE run_id=%s RETURNING *""", (owner, seconds, row["run_id"])).fetchone()
+                    WHERE run_id=%s RETURNING *""", (owner, 0 if recovery_only else 1, seconds, row["run_id"])).fetchone()
+                # Even at the budget limit we may project a saved END/interrupt;
+                # this lease may never start or continue a graph.
+                claimed["recovery_only"] = recovery_only
+                return claimed
 
     @contextmanager
     def fence(self, lease: dict):
@@ -64,6 +63,13 @@ class LeaseRepository(PostgresRunRepository):
         with self.fence(lease):
             pass
 
+    def mark_checkpoint_started(self, lease: dict) -> None:
+        # Commit BEFORE checkpoint IO. A crash in between is conservatively
+        # classified as missing state rather than permission to restart START.
+        with self.fence(lease) as connection:
+            connection.execute("UPDATE incident_agent_app.runs SET checkpoint_started=TRUE WHERE run_id=%s",
+                               (lease["run_id"],))
+
     def heartbeat(self, lease: dict, seconds: float) -> None:
         with self.fence(lease) as connection:
             connection.execute("""UPDATE incident_agent_app.runs SET heartbeat_at=clock_timestamp(),
@@ -72,7 +78,7 @@ class LeaseRepository(PostgresRunRepository):
 
     def finish(self, lease: dict, status: str, *, phase: str | None = None,
                error_code: str | None = None, retry_seconds: float | None = None) -> None:
-        if status not in {"succeeded", "failed", "waiting_approval", "retry_scheduled", "reconciling"}:
+        if status not in {"succeeded", "failed", "waiting_approval", "waiting_user", "retry_scheduled", "reconciling"}:
             raise ValueError("invalid worker result status")
         if (status == "retry_scheduled") != (retry_seconds is not None):
             raise ValueError("retry delay is required only for retry_scheduled")

@@ -21,6 +21,7 @@ from backend.app.persistence.runs import QueuedExecutionUnavailable, request_dig
 from backend.app.persistence.settings import get_database_settings
 from backend.app.runtime.checkpointer import fenced_checkpointer
 from backend.app.runtime.settings import WorkerSettings
+from backend.app.runtime.recovery import classify, transient
 
 
 def report(event, lease=None):
@@ -100,53 +101,49 @@ class Worker:
         report(status, lease)
 
     def _project(self, lease, snapshot):
-        state = snapshot.values or {}
-        if state.get("incident_id") != lease["incident_id"]:
-            self._finish(lease, "failed", error_code="CHECKPOINT_IDENTITY_MISMATCH")
+        decision = classify(lease, snapshot)
+        if decision.action != "stop":
+            self._finish(lease, "failed", error_code="INCOMPLETE_WORKFLOW")
             return
-        phase = str(state.get("phase") or "unknown")
-        interrupts = any(getattr(task, "interrupts", ()) for task in snapshot.tasks)
-        if interrupts and phase == "awaiting_approval" and state.get("approval_status") == "pending":
-            self._finish(lease, "waiting_approval", phase=phase)
-        elif snapshot.next:
-            # 2A owns recovery classification; never blindly invoke(None) here.
-            self._finish(lease, "failed", phase=phase, error_code="CHECKPOINT_REQUIRES_REVIEW")
-        elif phase in {"remediation_skipped", "remediation_planned"}:
-            self._finish(lease, "succeeded", phase=phase)
-        else:
-            self._finish(lease, "failed", phase=phase, error_code="WORKFLOW_FAILED")
+        self._finish(lease, decision.status, phase=str((snapshot.values or {}).get("phase") or "failed"),
+                     **({"error_code": decision.error_code} if decision.error_code else {}))
 
     def execute(self, lease):
         config = {"configurable": {"thread_id": lease["thread_id"]}}
+        reading_checkpoint = False
         try:
             if lease["workflow_version"] != "incident-v1" or request_digest(lease["input_payload"]) != lease["input_sha256"]:
                 self._finish(lease, "failed", error_code="UNSUPPORTED_OR_CORRUPT_INPUT")
                 return
             with self.graph_context(lease, self.lost) as graph:
                 self.repository.assert_owned(lease)
+                reading_checkpoint = True
                 snapshot = graph.get_state(config)
-                if snapshot.values or snapshot.next or (snapshot.config or {}).get("configurable", {}).get("checkpoint_id"):
+                reading_checkpoint = False
+                decision = classify(lease, snapshot)
+                if decision.action == "stop":
                     self._project(lease, snapshot)
                     return
-                if lease["attempt"] > 1:
-                    # Safe only because this release never dispatches queued writes.
-                    report("restart_without_checkpoint", lease)
-                graph.invoke({"incident_id": lease["incident_id"], "request": lease["input_payload"]}, config=config)
+                if lease.get("recovery_only"):
+                    self._finish(lease, "failed", error_code="ATTEMPTS_EXHAUSTED")
+                    return
+                report("resume_read_only" if decision.action == "continue" else "start", lease)
+                self.repository.assert_owned(lease)
+                graph.invoke(None if decision.action == "continue" else
+                             {"incident_id": lease["incident_id"], "request": lease["input_payload"]}, config=config)
+                reading_checkpoint = True
                 self._project(lease, graph.get_state(config))
         except LeaseLost:
             report("lease_lost", lease)
-        except (TimeoutError, ConnectionError):
+        except Exception as error:
             try:
-                if lease["attempt"] < self.settings.max_attempts:
+                if transient(error) and lease["attempt"] < self.settings.max_attempts:
                     self._finish(lease, "retry_scheduled", error_code="DEPENDENCY_TEMPORARY",
                                  retry_seconds=5 if lease["attempt"] == 1 else 15)
                 else:
-                    self._finish(lease, "failed", error_code="ATTEMPTS_EXHAUSTED")
-            except Exception:
-                report("result_not_committed", lease)
-        except Exception:
-            try:
-                self._finish(lease, "failed", error_code="WORKER_FAILED")
+                    code = ("ATTEMPTS_EXHAUSTED" if transient(error) else
+                            "CHECKPOINT_UNREADABLE" if reading_checkpoint else "WORKER_FAILED")
+                    self._finish(lease, "failed", error_code=code)
             except Exception:
                 report("result_not_committed", lease)
 

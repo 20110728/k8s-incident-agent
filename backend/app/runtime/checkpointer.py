@@ -15,6 +15,7 @@ class FencedPostgresSaver(PostgresSaver):
     def _owned(self, config):
         if self.lost.is_set() or config["configurable"]["thread_id"] != self.lease["thread_id"]:
             raise LeaseLost("checkpoint ownership was lost")
+        self.repository.mark_checkpoint_started(self.lease)
         # Keep the row locked through the saver commit: a new claimant cannot
         # slip between the ownership check and the checkpoint/pending write.
         with self.repository.fence(self.lease):
