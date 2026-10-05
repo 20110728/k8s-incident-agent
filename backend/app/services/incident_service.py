@@ -353,7 +353,7 @@ class IncidentApplicationService:
         else:
             try:
                 values = self._graph.get_state(_graph_config(row["thread_id"])).values
-                if not values and (row["status"] in {"running", "retry_scheduled"} or
+                if not values and not row.get("checkpoint_started", False) and (row["status"] in {"running", "retry_scheduled"} or
                         (row.get("last_error") or {}).get("code") in {
                             "WORKER_FAILED", "ATTEMPTS_EXHAUSTED", "UNSUPPORTED_OR_CORRUPT_INPUT"}):
                     values = {"incident_id": row["incident_id"], "request": row["input_payload"],

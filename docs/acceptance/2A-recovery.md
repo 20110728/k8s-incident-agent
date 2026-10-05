@@ -18,3 +18,5 @@ bash scripts/accept_stage2a.sh
 自动新建并保留独立测试库，迁移到 5，不动演示库；本次不跑前端测试，不需要 Node/npm。
 无新依赖/配置。先验收，不必重启。正式加载时需先停 worker，再重启 backend 自动迁移至 5，最后启动 worker；仍保持 sync 演示，queued 审批执行待 2B。
 未验证：ECS 动态结果、真实模型/集群崩溃恢复。合成测试通过不等于外部写可重放；已保存的业务失败 END 不自动重试。
+
+复验修复：首次反馈 179 passed / 1 failed，空 checkpoint 用例误用了会抛 KeyError 的模拟图，现改为真实 checkpointer；API 同时检查 checkpoint_started，防止把已丢失检查点伪装成未开始。无额外迁移/配置，拉取后重跑同一脚本。

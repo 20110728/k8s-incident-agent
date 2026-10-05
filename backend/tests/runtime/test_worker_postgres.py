@@ -26,8 +26,8 @@ from backend.app.runtime.checkpointer import fenced_checkpointer
 from backend.app.runtime.settings import WorkerSettings
 from backend.app.runtime.worker import Worker, OwnedDependency
 from backend.tests.run_1a_acceptance import isolated_database_url
-from backend.app.services.incident_service import IncidentApplicationService
-from backend.tests.api.fakes import FakeIncidentGraph
+from backend.app.api.dependencies import build_incident_service
+from backend.app.services.incident_service import IncidentGraphError
 
 PAYLOAD = {"namespace": "default", "service_name": "demo", "description": "worker acceptance"}
 
@@ -118,19 +118,38 @@ def test_two_claimers_and_stale_owner_cannot_publish(storage):
 
 
 def test_api_can_read_first_claim_before_checkpoint_and_worker_presence(storage):
-    connect, repo, _ = storage
+    connect, repo, settings = storage
     row = accept(repo)
     repo.announce("worker", 30)
     lease = repo.claim("worker", 30)
-    service = IncidentApplicationService(FakeIncidentGraph(), PostgresIncidentRepository(connect),
+    # Exercise real empty-checkpoint semantics, not the fake's dict KeyError.
+    with postgres_checkpointer(settings) as saver:
+        service = build_incident_service(checkpointer=saver, repository=PostgresIncidentRepository(connect),
                                          runs=repo, execution_mode="queued")
-    snapshot = service.get_incident(row["incident_id"])
-    assert snapshot.run["status"] == "running" and snapshot.worker_available
-    assert snapshot.state["request"] == PAYLOAD
-    repo.finish(lease, "failed", error_code="WORKER_FAILED")
-    repo.withdraw("worker")
-    snapshot = service.get_incident(row["incident_id"])
-    assert snapshot.phase == "failed" and not snapshot.worker_available
+        snapshot = service.get_incident(row["incident_id"])
+        assert snapshot.run["status"] == "running" and snapshot.worker_available
+        assert snapshot.state["request"] == PAYLOAD
+        repo.finish(lease, "failed", error_code="WORKER_FAILED")
+        repo.withdraw("worker")
+        snapshot = service.get_incident(row["incident_id"])
+        assert snapshot.phase == "failed" and not snapshot.worker_available
+
+
+@pytest.mark.parametrize("status", ["running", "retry_scheduled", "failed"])
+def test_api_does_not_hide_missing_checkpoint_after_write_started(storage, status):
+    connect, repo, settings = storage
+    row = accept(repo)
+    lease = repo.claim("worker", 30)
+    repo.mark_checkpoint_started(lease)
+    if status == "retry_scheduled":
+        repo.finish(lease, status, error_code="DEPENDENCY_TEMPORARY", retry_seconds=5)
+    elif status == "failed":
+        repo.finish(lease, status, error_code="WORKER_FAILED")
+    with postgres_checkpointer(settings) as saver:
+        service = build_incident_service(checkpointer=saver, repository=PostgresIncidentRepository(connect),
+                                         runs=repo, execution_mode="queued")
+        with pytest.raises(IncidentGraphError, match="checkpoint is missing"):
+            service.get_incident(row["incident_id"])
 
 
 def test_heartbeat_survives_long_synchronous_node(storage):
