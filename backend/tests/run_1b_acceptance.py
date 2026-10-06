@@ -33,6 +33,7 @@ def main():
         get_database_settings().database_url.get_secret_value(), database,
     )
     stage3a = database.startswith("incident_agent_test_3a_")
+    stage3b = database.startswith("incident_agent_test_3b_")
     extra = list(STAGE2B_REGRESSION_TARGETS) if database.startswith("incident_agent_test_2b_") or stage3a else []
     if stage3a:
         extra += ["backend/tests/identity"]
@@ -40,6 +41,11 @@ def main():
         print("Regression scope: operation journal, approval, execution and business verification; not the full historical suite.", flush=True)
     stage2c = database.startswith("incident_agent_test_2c_")
     report = None
+    if stage3b:
+        if environment.get("STAGE3B_RBAC") != "1" or not environment.get("INCIDENT_AGENT_TEST_AUDIT_DIR"):
+            print("3B requires the real credential acceptance wrapper.", file=sys.stderr)
+            return 2
+        report = Path(environment["INCIDENT_AGENT_TEST_AUDIT_DIR"]) / "junit.xml"
     if stage3a:
         if environment.get("STAGE3A_KIND") != "1" or not environment.get("INCIDENT_AGENT_TEST_AUDIT_DIR"):
             print("3A requires the real kind acceptance wrapper.", file=sys.stderr)
@@ -51,12 +57,21 @@ def main():
             print("2C requires the full process/kind acceptance wrapper.", file=sys.stderr)
             return 2
         report = Path(environment["INCIDENT_AGENT_TEST_AUDIT_DIR"]) / "junit.xml"
+    targets = (["backend/tests/persistence", "backend/tests/rbac"] if stage3b else
+               ["backend/tests/persistence", "backend/tests/api", "backend/tests/runtime"])
     result = subprocess.call([
         sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
-        "backend/tests/persistence", "backend/tests/api", "backend/tests/runtime",
-    ] + extra + (["--junitxml=" + str(report)] if report else []), env=environment)
-    if result or not (stage2c or stage3a):
+    ] + targets + extra + (["--junitxml=" + str(report)] if report else []), env=environment)
+    if result or not (stage2c or stage3a or stage3b):
         return result
+    if stage3b:
+        cases = [case for case in ET.parse(report).iter("testcase")
+                 if case.attrib.get("name", "").startswith("test_3B_real_identity_matrix_and_approved_repair[")]
+        if len(cases) != 2 or any(case.find(tag) is not None for case in cases for tag in ("skipped", "failure", "error")):
+            print("3B real credential checks incomplete or skipped", file=sys.stderr)
+            return 1
+        print("3B: reader/remediator real API matrices and approved repair passed.", flush=True)
+        return 0
     if stage3a:
         cases = [case for case in ET.parse(report).iter("testcase")
                  if case.attrib.get("name", "").startswith("test_3A_approved_identity_guards_real_write[")]

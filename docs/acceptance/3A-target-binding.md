@@ -1,5 +1,7 @@
 # 3A 交付
 
+维护者已反馈 `PASS: 3A ECS acceptance` 并完成重启；进入 3B。
+
 维护者已反馈 2C PASS；本块仅做目标、方案版本与审批绑定，不进入 3B 权限验收。
 
 新写方案由服务端从证据绑定 `target_uid`；审批请求/记录带 `plan_revision`、`approval_revision`。修改请求、证据、方案或登记配置后，原审批不能授权新方案。补采 Pod、ReplicaSet、Deployment、EndpointSlice 关联 UID，拒绝同名不同对象及矛盾关联；同步与 queued 写入均检查目标 UID，已有发布版本检查保留。
