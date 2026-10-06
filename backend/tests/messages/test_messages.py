@@ -93,7 +93,12 @@ def test_4A1_api_validation_and_no_workflow(storage):
                       {"related_run_id": "other"}, {"evidence_refs": ["fake"]}):
             assert client.post(url, json={**body, **extra}).status_code == 422
         for content in (" ", "\x00", "x" * 16001):
-            assert client.post(url, json={**body, "content": content}).status_code == 422
+            rejected = client.post(url, json={**body, "content": content})
+            assert rejected.status_code == 422
+            detail = rejected.json()["error"]
+            assert detail["code"] == "REQUEST_VALIDATION_ERROR"
+            assert detail["details"][0]["loc"] == ["body", "content"]
+            assert set(detail["details"][0]) == {"loc", "type", "msg"}
         for query in ("?limit=0", "?limit=51", "?before_sequence=0", "?before_sequence=99999999999999999999"):
             assert client.get(url + query).status_code == 422
         assert client.get("/api/v1/incidents/missing/messages").status_code == 404

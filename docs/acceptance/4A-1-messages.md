@@ -1,5 +1,7 @@
 # 4A-1：消息持久化（待 ECS 验收）
 
+复验修复：空白/NUL 消息触发的 ValueError 被放入校验错误 ctx，导致错误响应 JSON 序列化失败。统一校验响应仅保留 loc/type/msg，不返回异常对象及原输入；422 和消息校验规则不变。脚本补校验错误与现有事件/系统 API 回归，无新增迁移或依赖。
+
 迁移 7 `incident_messages`；新增消息 schema/仓储/路由并在 main 注册。现有事件可保存消息，按事件顺序分页；同事件同角色同 client_message_id、同内容返回原记录，不同内容 409。公共 POST 只能写 user_supplied，禁止伪造角色、证据或 run；内部模型/工具消息可关联本事件 run 并按稳定 ID 去重，尚未接入模型生产路径。
 
 `POST /api/v1/incidents/{id}/messages` 请求为 `{"client_message_id":"note-1","content":"刚发布过新版本"}`；首次 201、重复 200，返回 `message`、`created`、`processing:not_started`。这里只保存，不执行聊天指令、不触发模型/采集/审批。新 POST 要求 queued；活动 run、待审批或未核对写操作暂返回 409，待 4B 加入失效/恢复联动后放开。GET 在两种模式下均可用，旧事件返回空列表，不要求新建 run/检查点。

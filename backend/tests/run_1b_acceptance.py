@@ -71,7 +71,9 @@ def main():
     targets = (["backend/tests/persistence", "backend/tests/rbac"] if stage3b else
                ["backend/tests/persistence", "backend/tests/api", "backend/tests/runtime"])
     if stage4a1:
-        targets = ["backend/tests/persistence", "backend/tests/messages"]
+        targets = ["backend/tests/persistence", "backend/tests/messages",
+                   "backend/tests/api/test_validation_errors.py",
+                   "backend/tests/api/test_incidents_api.py", "backend/tests/api/test_system_api.py"]
     result = subprocess.call([
         sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
     ] + targets + extra + (["--junitxml=" + str(report)] if report else []), env=environment)
