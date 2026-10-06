@@ -25,6 +25,7 @@ from backend.app.api.routes.system import (
 )
 from backend.app.api.routes.rechecks import router as recheck_router
 from backend.app.api.routes.messages import router as message_router
+from backend.app.api.routes.rounds import router as round_router
 from backend.app.config import ApiSettings, get_api_settings
 from backend.app.services.incident_service import (
     IncidentApplicationService,
@@ -138,6 +139,7 @@ def create_app(
     )
     app.include_router(recheck_router, prefix=resolved_settings.api_prefix)
     app.include_router(message_router, prefix=resolved_settings.api_prefix)
+    app.include_router(round_router, prefix=resolved_settings.api_prefix)
 
     return app
 

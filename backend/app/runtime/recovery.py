@@ -8,6 +8,7 @@ from psycopg import OperationalError
 
 from backend.app.persistence.runs import request_digest
 from backend.app.persistence.operations import approval_binding, json_value
+from backend.app.services.round_context import ROUND_WORKFLOW
 
 
 READ_ONLY_NODES = frozenset({
@@ -36,8 +37,13 @@ def transient(error: Exception) -> bool:
 
 def classify(lease: dict, snapshot, operation=None) -> RecoveryDecision:
     stop = lambda status, code=None: RecoveryDecision("stop", status, code)
-    if (lease["workflow_version"] != "incident-v1" or
+    if (lease["workflow_version"] not in {"incident-v1", ROUND_WORKFLOW} or
             request_digest(lease["input_payload"]) != lease["input_sha256"]):
+        return stop("failed", "UNSUPPORTED_OR_CORRUPT_INPUT")
+    if lease["workflow_version"] == ROUND_WORKFLOW and (
+        not isinstance(lease.get("context_snapshot"), dict) or
+        request_digest(lease["context_snapshot"]) != lease.get("context_sha256")
+    ):
         return stop("failed", "UNSUPPORTED_OR_CORRUPT_INPUT")
     state = json_value(snapshot.values or {})
     pending = tuple(snapshot.next or ())
@@ -50,6 +56,10 @@ def classify(lease: dict, snapshot, operation=None) -> RecoveryDecision:
     if state.get("incident_id") != lease["incident_id"]:
         return stop("failed", "CHECKPOINT_IDENTITY_MISMATCH")
     if state.get("request") != lease["input_payload"]:
+        return stop("failed", "CHECKPOINT_INPUT_MISMATCH")
+    if lease["workflow_version"] == ROUND_WORKFLOW and (
+        state.get("round_context") != lease["context_snapshot"] or state.get("run_id") != lease["run_id"]
+    ):
         return stop("failed", "CHECKPOINT_INPUT_MISMATCH")
     saved = lease.get("approval_payload")
     if saved and (saved.get("binding") != approval_binding(state) or

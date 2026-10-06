@@ -70,6 +70,8 @@ def build_approval_request(state: IncidentState) -> ApprovalRequest:
         "incident_id": incident_id,
         "remediation_plan": plan_payload(plan),
     }
+    if state.get("run_id"):
+        fingerprint_payload["run_id"] = state["run_id"]
     if state.get("service_profile") is not None:
         fingerprint_payload["service_profile"] = state["service_profile"]
     if plan.target_uid:

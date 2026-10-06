@@ -350,7 +350,9 @@ class IncidentApplicationService:
         )
 
     def _snapshot_for_run(self, row: dict) -> IncidentSnapshot:
-        if row["status"] == "queued" and row["attempt"] == 0:
+        if row.get("output_snapshot") is not None and row["status"] in {"succeeded", "failed", "cancelled"}:
+            state = _normalize_state(row["output_snapshot"], incident_id=row["incident_id"])
+        elif row["status"] == "queued" and row["attempt"] == 0:
             state = {"incident_id": row["incident_id"], "request": row["input_payload"], "phase": "created"}
         else:
             try:
@@ -370,6 +372,24 @@ class IncidentApplicationService:
         return IncidentSnapshot(row["incident_id"], row["thread_id"], state,
                                 run=run_summary(row), execution_mode=self._execution_mode,
                                 worker_available=self._runs.worker_available())
+
+    def get_run_snapshot(self, row: dict) -> IncidentSnapshot:
+        """Read the selected round, not the event's latest mutable projection."""
+        return self._snapshot_for_run(row)
+
+    def get_legacy_snapshot(self, incident_id: str) -> IncidentSnapshot:
+        record = self._repository.get(incident_id)
+        if record is None:
+            raise IncidentNotFoundError("incident not found")
+        try:
+            values = self._graph.get_state(_graph_config(record.thread_id)).values
+        except Exception as error:
+            raise IncidentGraphError("original checkpoint could not be read") from error
+        if not values:
+            raise IncidentNotFoundError("original checkpoint not found")
+        return IncidentSnapshot(incident_id, record.thread_id,
+                                _normalize_state(values, incident_id=incident_id),
+                                execution_mode=self._execution_mode)
 
     def get_by_idempotency_key(self, key: str) -> IncidentSnapshot:
         row = self._runs.by_key(key) if self._runs is not None else None

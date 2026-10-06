@@ -27,6 +27,8 @@ from backend.app.runtime.operations import LedgerExecutor
 from backend.app.tools.client import create_clients
 from backend.app.runtime.telemetry import report
 from backend.app.runtime.failpoints import get_failpoints, hit
+from backend.app.services.round_context import ROUND_WORKFLOW
+from backend.app.persistence.operations import json_value
 
 
 class OwnedDependency:
@@ -145,6 +147,7 @@ class Worker:
             self._finish(lease, "failed", error_code="INCOMPLETE_WORKFLOW")
             return
         self._finish(lease, decision.status, phase=str((snapshot.values or {}).get("phase") or "failed"),
+                     **({"output_snapshot": json_value(snapshot.values)} if lease["workflow_version"] == ROUND_WORKFLOW and snapshot.values else {}),
                      **({"error_code": decision.error_code} if decision.error_code else {}))
 
     def execute(self, lease):
@@ -154,7 +157,13 @@ class Worker:
             # Recover external effects even if graph/checkpoint/LLM setup fails.
             if self._reconcile_pending(lease, recovering=True):
                 return
-            if lease["workflow_version"] != "incident-v1" or request_digest(lease["input_payload"]) != lease["input_sha256"]:
+            if lease["workflow_version"] not in {"incident-v1", ROUND_WORKFLOW} or request_digest(lease["input_payload"]) != lease["input_sha256"]:
+                self._finish(lease, "failed", error_code="UNSUPPORTED_OR_CORRUPT_INPUT")
+                return
+            if lease["workflow_version"] == ROUND_WORKFLOW and (
+                not isinstance(lease.get("context_snapshot"), dict) or
+                request_digest(lease["context_snapshot"]) != lease.get("context_sha256")
+            ):
                 self._finish(lease, "failed", error_code="UNSUPPORTED_OR_CORRUPT_INPUT")
                 return
             with self.graph_context(lease, self.lost) as graph:
@@ -174,6 +183,9 @@ class Worker:
                 input_value = (Command(resume=lease["approval_payload"]["decision"]) if decision.action == "resume" else
                                None if decision.action == "continue" else
                                {"incident_id": lease["incident_id"], "request": lease["input_payload"]})
+                if decision.action == "start" and lease["workflow_version"] == ROUND_WORKFLOW:
+                    input_value["round_context"] = lease["context_snapshot"]
+                    input_value["run_id"] = lease["run_id"]
                 graph.invoke(input_value, config=config)
                 reading_checkpoint = True
                 self._project(lease, graph.get_state(config))

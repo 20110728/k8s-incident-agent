@@ -81,7 +81,8 @@ class LeaseRepository(PostgresRunRepository):
                 WHERE run_id=%s""", (seconds, lease["run_id"]))
 
     def finish(self, lease: dict, status: str, *, phase: str | None = None,
-               error_code: str | None = None, retry_seconds: float | None = None) -> None:
+               error_code: str | None = None, retry_seconds: float | None = None,
+               output_snapshot: dict | None = None) -> None:
         if status not in {"succeeded", "failed", "waiting_approval", "waiting_user", "retry_scheduled", "reconciling"}:
             raise ValueError("invalid worker result status")
         if (status == "retry_scheduled") != (retry_seconds is not None):
@@ -101,3 +102,6 @@ class LeaseRepository(PostgresRunRepository):
             if phase is not None:
                 connection.execute("UPDATE incident_agent_app.incidents SET phase=%s,updated_at=clock_timestamp() WHERE incident_id=%s",
                                    (phase, lease["incident_id"]))
+            if output_snapshot is not None and status in {"succeeded", "failed"}:
+                connection.execute("UPDATE incident_agent_app.runs SET output_snapshot=COALESCE(output_snapshot,%s) WHERE run_id=%s",
+                                   (Jsonb(output_snapshot), lease["run_id"]))

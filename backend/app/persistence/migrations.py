@@ -240,6 +240,18 @@ MIGRATIONS += (
 )
 
 
+MIGRATIONS += (
+    Migration(8, "incident_rounds", (
+        "ALTER TABLE incident_agent_app.runs ADD COLUMN source_message_id TEXT REFERENCES incident_agent_app.messages(message_id)",
+        "ALTER TABLE incident_agent_app.runs ADD COLUMN input_message_sequence BIGINT",
+        "ALTER TABLE incident_agent_app.runs ADD COLUMN context_snapshot JSONB",
+        "ALTER TABLE incident_agent_app.runs ADD COLUMN context_sha256 TEXT",
+        "ALTER TABLE incident_agent_app.runs ADD COLUMN output_snapshot JSONB",
+        "CREATE UNIQUE INDEX runs_source_message_unique ON incident_agent_app.runs(source_message_id) WHERE source_message_id IS NOT NULL",
+    )),
+)
+
+
 def run_migrations(
     connection: MigrationConnectionPort,
 ) -> list[int]:

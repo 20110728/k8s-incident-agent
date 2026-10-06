@@ -24,9 +24,12 @@ def json_value(value):
 
 
 def approval_binding(state):
-    return request_digest({key: json_value(state.get(key)) for key in (
+    payload = {key: json_value(state.get(key)) for key in (
         "request", "remediation_plan", "service_profile", "diagnosis", "evidence",
-    )})
+    )}
+    if state.get("run_id"):
+        payload["run_id"] = state["run_id"]
+    return request_digest(payload)
 
 
 class OperationRepository(LeaseRepository):

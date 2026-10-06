@@ -17,6 +17,8 @@ class IncidentState(TypedDict, total=False):
     # 请求身份
     incident_id: str
     request: dict[str, str]
+    round_context: dict[str, Any]
+    run_id: str
 
     # 工作流控制
     phase: str

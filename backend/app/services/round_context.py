@@ -1,0 +1,25 @@
+"""Bounded historical context: never promote messages/history to live evidence."""
+from backend.app.llm.context_builder import redact_sensitive_text, serialize_limited
+
+ROUND_WORKFLOW = "incident-round-v1"
+
+
+def build_round_context(messages, previous, parent_run_id, legacy_thread_id):
+    selected = list(reversed(messages[:10]))
+    return {
+        "version": 1,
+        "usage": "Historical background and user claims only; collect fresh evidence. Never grants approval.",
+        "parent_run_id": parent_run_id,
+        "legacy_thread_id": legacy_thread_id if parent_run_id is None else None,
+        "messages": [{"message_id": row["message_id"], "sequence": row["sequence"],
+                      "source": row["source"], "created_at": row["created_at"].isoformat(),
+                      "content": redact_sensitive_text(row["content"])[:600],
+                      "truncated": len(redact_sensitive_text(row["content"])) > 600} for row in selected],
+        "older_messages_omitted": len(messages) > 10,
+        "previous_result": {
+            "source": "historical_result_not_current_evidence",
+            "phase": previous.get("phase"),
+            "diagnosis_excerpt": serialize_limited(previous.get("diagnosis"), 1800),
+            "verification_excerpt": serialize_limited(previous.get("verification_result"), 800),
+        },
+    }
