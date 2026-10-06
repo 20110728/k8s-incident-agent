@@ -1,5 +1,7 @@
 # 3B 交付
 
+复验修复：兼容 Kubernetes SDK 的 `response_types_map` / `response_type` 两种调用签名，权限请求与 UID 清理共用适配；发请求前选择签名，不在写失败后重试。新增 SDK 契约回归用例，随本脚本在 ECS 执行。本地仅 AST 与 diff 静态检查。上次失败的临时资源需按该次 `reader/created-resources.json`、`remediator/created-resources.json` 和 `cleanup.json` 核对，不能按名称批量删除。
+
 维护者已反馈 3A PASS 并重启。3B 拆分 reader/remediator 权限预期，使用临时 ServiceAccount 的短期令牌、独立 kubeconfig 实际请求 Kubernetes，并用受限 remediator 完成一次有数据库审批/操作账本的 Service 修复。
 
 涉及：`infra/rbac/{reader,remediator}.yaml`、`scripts/check_rbac.sh`、`backend/tests/rbac/`、验收 runner 和 `scripts/accept_stage3b.sh`。reader 补齐固定业务检查器的 GET proxy 权限，与现有业务探针 Role 一致；写权限仍仅登记的 Service/Deployment。

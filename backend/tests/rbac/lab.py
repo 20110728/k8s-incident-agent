@@ -1,5 +1,6 @@
 """Isolated test identities; bootstrap admin credentials never reach the executor."""
 from copy import deepcopy
+from inspect import signature
 import json
 import os
 from pathlib import Path
@@ -38,6 +39,21 @@ def api_from_config(path=None):
                             client_configuration=configuration)
     configuration.retries = 0
     return client.ApiClient(configuration=configuration)
+
+
+def call_json_api(api, path, method, *, body=None, query=None, content_type=None):
+    """Select the SDK contract before sending; never retry a possibly sent write."""
+    parameters = signature(api.call_api).parameters
+    if "response_types_map" in parameters:
+        response = {"response_types_map": {200: "object", 201: "object", 202: "object"}}
+    elif "response_type" in parameters:
+        response = {"response_type": "object"}
+    else:
+        raise RuntimeError("Unsupported Kubernetes ApiClient.call_api signature")
+    return api.call_api(path, method, body=body, query_params=query or [],
+        header_params={"Content-Type": content_type or "application/json"},
+        auth_settings=["BearerToken"], _return_http_data_only=False,
+        _request_timeout=(3, 10), **response)
 
 
 class Lab:
@@ -129,10 +145,8 @@ class Lab:
     def request(self, api, subject, label, method, path, expected, *, body=None, query=None, content_type=None):
         status = None
         try:
-            value, status, _ = api.call_api(path, method, body=body, query_params=query or [],
-                header_params={"Content-Type": content_type or "application/json"},
-                auth_settings=["BearerToken"], response_type="object", _return_http_data_only=False,
-                _request_timeout=(3, 10))
+            value, status, _ = call_json_api(api, path, method, body=body,
+                query=query, content_type=content_type)
         except ApiException as error:
             status, value = error.status, None
             if status == 403:
@@ -151,8 +165,8 @@ class Lab:
         failures = []
         for path, uid in reversed(self.created):
             try:
-                self.admin.call_api(path, "DELETE", body={"apiVersion": "v1", "kind": "DeleteOptions",
-                    "preconditions": {"uid": uid}}, auth_settings=["BearerToken"], _request_timeout=(3, 10))
+                call_json_api(self.admin, path, "DELETE", body={"apiVersion": "v1", "kind": "DeleteOptions",
+                    "preconditions": {"uid": uid}})
             except ApiException as error:
                 if error.status != 404:
                     failures.append({"path": path, "status": error.status})
