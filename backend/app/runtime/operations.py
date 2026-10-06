@@ -13,6 +13,8 @@ from backend.app.persistence.runs import request_digest
 from backend.app.service_profiles.registry import revalidate_live_profile
 from backend.app.tools.client import REQUEST_TIMEOUT
 from backend.app.tools.remediation_tools import _service_snapshot, _deployment_snapshot
+from backend.app.runtime.failpoints import hit
+from backend.app.runtime.telemetry import report
 
 
 class OutcomeUnknown(RuntimeError):
@@ -116,13 +118,18 @@ class LedgerExecutor:
         patch = build_patch(auth.plan, resource, before)
         operation = self.repository.prepare(self.lease, approval_id=auth.approval_id, plan_revision=revision,
             plan=auth.plan.model_dump(mode="json"), action=auth.plan.action, before=before, target=target, patch=patch)
+        report("operation_prepared", self.lease, operation_id=operation["operation_id"], node="execute_remediation",
+               input_value=operation["request_patch"], output_value=operation["before_snapshot"])
+        hit("after_operation_prepare", self.lease, operation["operation_id"])
         # A prepared operation can be resumed only against its exact original target.
         if (before != operation["before_snapshot"] or before["uid"] != approved_uid(state, auth.plan.parameters) or
                 (auth.plan.parameters.resource_kind == "Deployment" and before["resource_version"] != live["resource_version"]) or
                 before["configuration"] != prior_configuration(auth.plan)):
             return self._result(auth, operation, "conflict", code="OPERATION_PRECONDITION_FAILED")
         self.repository.dispatch(self.lease, operation["operation_id"])
+        hit("before_patch", self.lease, operation["operation_id"])
         self._assert_owned()
+        report("patch_dispatch", self.lease, operation_id=operation["operation_id"], node="execute_remediation")
         try:
             method = (self.clients.core.patch_namespaced_service if auth.plan.parameters.resource_kind == "Service"
                       else self.clients.apps.patch_namespaced_deployment)
@@ -137,6 +144,9 @@ class LedgerExecutor:
         except Exception:
             self.repository.record(self.lease, "outcome_unknown", code="WRITE_OUTCOME_UNKNOWN")
             raise OutcomeUnknown("patch response is unknown") from None
+        report("patch_response", self.lease, operation_id=operation["operation_id"], node="execute_remediation",
+               output_value=response.to_dict() if hasattr(response, "to_dict") else None)
+        hit("after_patch_response", self.lease, operation["operation_id"])
         # Record the actual API response, never a post-hoc GET or inferred version.
         try:
             if auth.plan.parameters.resource_kind == "Service":
@@ -173,6 +183,9 @@ class LedgerExecutor:
         self.repository.record(self.lease, "succeeded" if status == "succeeded" else "rejected",
             response=after, result=result.model_dump(mode="json"), code=code,
             attribution="confirmed" if status == "succeeded" else "not_established")
+        report("operation_result", self.lease, operation_id=operation["operation_id"], error_code=code,
+               output_value=result.model_dump(mode="json"))
+        hit("after_operation_result", self.lease, operation["operation_id"])
         return result
 
     def reconcile(self, operation):
@@ -193,4 +206,6 @@ class LedgerExecutor:
         self.repository.record(self.lease, "reconciled" if confirmed else "manual_required", observed=observed,
             attribution="confirmed" if confirmed else "not_established",
             code=None if confirmed else "OPERATION_MANUAL_REQUIRED")
+        report("operation_reconciled", self.lease, operation_id=operation["operation_id"],
+               error_class=None if confirmed else "outcome_unknown", output_value=observed)
         return confirmed

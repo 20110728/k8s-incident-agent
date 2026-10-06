@@ -5,6 +5,8 @@ from langgraph.checkpoint.postgres import PostgresSaver
 
 from backend.app.persistence.database import normalize_psycopg_dsn
 from backend.app.persistence.leases import LeaseLost
+from backend.app.runtime.failpoints import hit
+from backend.app.runtime.telemetry import report
 
 
 class FencedPostgresSaver(PostgresSaver):
@@ -23,7 +25,14 @@ class FencedPostgresSaver(PostgresSaver):
 
     def put(self, config, checkpoint, metadata, new_versions):
         with self._owned(config):
-            return super().put(config, checkpoint, metadata, new_versions)
+            result = super().put(config, checkpoint, metadata, new_versions)
+        values = checkpoint.get("channel_values", {})
+        phase = values.get("phase")
+        report("checkpoint_saved", self.lease, node=phase, output_value=values)
+        # Outside both transactions: barriers never hold a run-row lock.
+        if phase == "evidence_collected":
+            hit("after_evidence_checkpoint", self.lease)
+        return result
 
     def put_writes(self, config, writes, task_id, task_path=""):
         with self._owned(config):

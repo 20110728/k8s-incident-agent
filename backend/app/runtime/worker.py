@@ -1,5 +1,4 @@
 """Run with python -m backend.app.runtime.worker. No HTTP process runs jobs."""
-import json
 import os
 import signal
 import threading
@@ -16,7 +15,7 @@ from backend.app.agent.dependencies import (
 )
 from backend.app.agent.graph import build_incident_graph
 from backend.app.persistence.database import connect_database
-from backend.app.persistence.leases import LeaseLost
+from backend.app.persistence.leases import LeaseLost, UnsafeRetry
 from backend.app.persistence.operations import OperationRepository
 from backend.app.persistence.migrations import run_migrations
 from backend.app.persistence.runs import request_digest
@@ -26,12 +25,8 @@ from backend.app.runtime.settings import WorkerSettings
 from backend.app.runtime.recovery import classify, transient
 from backend.app.runtime.operations import LedgerExecutor
 from backend.app.tools.client import create_clients
-
-
-def report(event, lease=None):
-    # No input, DSN, dependency exception or model text in worker logs.
-    print(json.dumps({"event": event, "run_id": lease["run_id"] if lease else None,
-                      "epoch": lease["lease_epoch"] if lease else None}), flush=True)
+from backend.app.runtime.telemetry import report
+from backend.app.runtime.failpoints import get_failpoints, hit
 
 
 class OwnedDependency:
@@ -45,7 +40,18 @@ class OwnedDependency:
             if self.lost.is_set():
                 raise LeaseLost("worker lost its lease")
             self.repository.assert_owned(self.lease)
-            return method(*args, **kwargs)
+            started = time.monotonic()
+            report("dependency_started", self.lease, node=name, input_value=[args, kwargs])
+            try:
+                result = method(*args, **kwargs)
+            except Exception as error:
+                report("dependency_failed", self.lease, node=name,
+                       error_class="transient" if transient(error) else "permanent",
+                       elapsed_ms=round((time.monotonic()-started)*1000))
+                raise
+            report("dependency_completed", self.lease, node=name, output_value=result,
+                   elapsed_ms=round((time.monotonic()-started)*1000))
+            return result
         return call
 
 
@@ -67,6 +73,7 @@ def production_graph(settings, repository, lease, lost):
 
 class Worker:
     def __init__(self, repository, graph_context, settings=None, owner=None, reconciler=None):
+        get_failpoints()  # Reject unsafe injection before any worker IO.
         self.repository, self.graph_context = repository, graph_context
         self.settings = settings or WorkerSettings()
         self.owner = owner or str(uuid4())
@@ -87,7 +94,7 @@ class Worker:
             except Exception:
                 # Fail closed; a recovered DB connection cannot resurrect ownership.
                 self.lost.set()
-                report("heartbeat_lost")
+                report("heartbeat_lost", self._lease, error_class="lease_lost")
 
     def _finish(self, lease, status, **kwargs):
         with self._lock:
@@ -95,7 +102,10 @@ class Worker:
                 raise LeaseLost("heartbeat failed")
             self.repository.finish(lease, status, **kwargs)
             self._lease = None
-        report(status, lease)
+        report(status, lease, error_code=kwargs.get("error_code"),
+               error_class={"retry_scheduled": "transient", "reconciling": "outcome_unknown",
+                            "waiting_approval": "needs_input", "waiting_user": "needs_input",
+                            "failed": "permanent"}.get(status))
 
     def _operation(self, lease):
         # Older read-only test repositories have no ledger; production always does.
@@ -180,6 +190,11 @@ class Worker:
                     code = ("ATTEMPTS_EXHAUSTED" if transient(error) else
                             "CHECKPOINT_UNREADABLE" if reading_checkpoint else "WORKER_FAILED")
                     self._finish(lease, "failed", error_code=code)
+            except UnsafeRetry:
+                try:
+                    self._finish(lease, "reconciling", error_code="WRITE_REQUIRES_RECONCILIATION")
+                except Exception:
+                    report("result_not_committed", lease)
             except Exception:
                 report("result_not_committed", lease)
 
@@ -196,6 +211,7 @@ class Worker:
                     self._lease = lease
                 if lease is not None:
                     report("claimed", lease)
+                    hit("after_claim", lease)
                     task = threading.Thread(target=self.execute, args=(lease,), daemon=True)
                     task.start()
                     deadline = None
@@ -222,6 +238,7 @@ class Worker:
 
 
 def main():
+    get_failpoints()
     database = get_database_settings()
     connect = partial(connect_database, database)
     with connect() as connection:

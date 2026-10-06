@@ -10,6 +10,8 @@ from typing import Any
 
 from psycopg import Error, errors
 from psycopg.types.json import Jsonb
+from backend.app.runtime.failpoints import hit
+from backend.app.runtime.telemetry import report
 
 SCOPE = "single-operator:create-incident:v1"
 KEY_PATTERN = r"^[A-Za-z0-9._:-]{1,128}$"
@@ -144,6 +146,8 @@ class PostgresRunRepository:
                             (run_id, incident_id, thread_id, Jsonb(payload), digest, SCOPE if key is not None else None, key, digest))
                         row = cursor.fetchone()
             # Both transaction and connection contexts have committed before returning.
+            report("accepted", row)
+            hit("after_accept", row)
             return row
         except errors.UniqueViolation as error:
             if key is not None and error.diag.constraint_name == "runs_idempotency_unique":

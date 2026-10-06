@@ -8,6 +8,7 @@ from contextlib import (
 )
 
 from fastapi import FastAPI
+from backend.app.runtime.failpoints import get_failpoints
 
 from backend.app.persistence.serialization_security import (
     STRICT_MSGPACK_ENABLED,
@@ -44,6 +45,9 @@ def create_app(
     ) = None,
 ) -> FastAPI:
     resolved_settings = settings or get_api_settings()
+    failure = get_failpoints()
+    if failure.settings.failpoint and resolved_settings.environment != "test":
+        raise ValueError("failpoints are forbidden outside test API configuration")
 
     docs_url = (
         "/docs"

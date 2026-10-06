@@ -3,6 +3,8 @@ from psycopg.types.json import Jsonb
 
 from backend.app.persistence.leases import LeaseRepository, LeaseLost
 from backend.app.persistence.runs import RunError, request_digest
+from backend.app.runtime.failpoints import hit
+from backend.app.runtime.telemetry import report
 
 
 class ApprovalConflict(RunError):
@@ -45,8 +47,10 @@ class OperationRepository(LeaseRepository):
                 raise ApprovalConflict()
             connection.execute("""UPDATE incident_agent_app.runs SET approval_payload=%s,status='queued',
                 updated_at=clock_timestamp() WHERE run_id=%s""", (Jsonb(payload), run_id))
+        report("approval_saved", row, input_value=payload)
 
     def operation(self, run_id):
+        hit("before_operation_read", {"run_id": run_id})
         rows = self._read("SELECT * FROM incident_agent_app.operations WHERE run_id=%s", (run_id,))
         return rows[0] if rows else None
 
@@ -57,6 +61,7 @@ class OperationRepository(LeaseRepository):
             WHERE incident_id=%s ORDER BY created_at DESC LIMIT 50""", (incident_id,))
 
     def prepare(self, lease, *, approval_id, plan_revision, plan, action, before, target, patch):
+        hit("before_operation_prepare", lease)
         operation_id = "op-" + request_digest({"run": lease["run_id"], "plan": plan_revision,
                                                "approval": approval_id, "sequence": 0})
         with self.fence(lease) as connection:
@@ -88,6 +93,7 @@ class OperationRepository(LeaseRepository):
                 raise LeaseLost("operation has already been dispatched")
 
     def record(self, lease, state, *, response=None, observed=None, result=None, code=None, attribution="not_established"):
+        hit("before_operation_record", lease)
         if state not in {"succeeded", "rejected", "outcome_unknown", "reconciled", "manual_required"}:
             raise ValueError("invalid operation outcome")
         with self.fence(lease) as connection:

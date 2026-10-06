@@ -13,7 +13,7 @@ bash scripts/accept_stage2b.sh
 
 预期：无失败；本块真实数据库和 kind 用例不跳过；最后 `PASS: 2B ECS acceptance`。日志在 `evals/results/2b/`。独立测试库自动创建并保留，迁移至 6；kind 用当前凭据在 `agent-demo` 创建并清理随机名 `stage2b-*` Service，不修改现有 Service/Deployment。需要对应创建/删除权限。仅排查模拟测试可用 `STAGE2B_KIND=0 bash scripts/accept_stage2b.sh`，不会输出完整验收 PASS。前端会执行 npm ci/test/build。
 
-无新增依赖、无新增必填配置。先验收，不必重启；通过后加载：先停运行中的 worker，重启 backend 自动迁移至 6，再启 worker；前端需重建。Compose 沿用现有 LOCAL_UID/LOCAL_GID/KUBECONFIG_PATH。启用排队执行仍使用 `.env` 的 `INCIDENT_AGENT_API_EXECUTION_MODE=queued` 并重建 backend 容器；已启用无需改配置。
+无新增依赖、无新增必填配置。先验收，不必重启；通过后加载：先停运行中的 worker，重启 backend 自动迁移至 6，再启 worker；前端需重建。Compose 沿用现有 LOCAL_UID/LOCAL_GID/KUBECONFIG_PATH。启用排队执行仍使用 `.env` 的 `INCIDENT_AGENT_EXECUTION_MODE=queued` 并重建 backend 容器；已启用无需改配置。
 
 查询操作证据：`GET /api/v1/incidents/{incident_id}/operations`。`manual_required` 保留观测与未知归属，run 保持 reconciling，不自动重试/回滚；此块不提供人工关闭接口。
 

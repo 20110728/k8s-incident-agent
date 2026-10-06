@@ -16,7 +16,7 @@ from backend.app.agent.nodes import request_human_approval, make_execute_remedia
 from backend.app.agent.schemas import ApprovalDecision
 from backend.app.agent.state import IncidentState
 from backend.app.persistence.incidents import PostgresIncidentRepository
-from backend.app.persistence.leases import LeaseLost
+from backend.app.persistence.leases import LeaseLost, UnsafeRetry
 from backend.app.persistence.operations import ApprovalConflict, approval_binding, json_value
 from backend.app.runtime import operations as module
 from backend.app.runtime.operations import LedgerExecutor, OutcomeUnknown
@@ -216,6 +216,17 @@ def test_rejected_response_is_not_retried(operation_case):
     assert executor.execute(state).status == "conflict"
     assert executor.execute(state).status == "conflict"
     assert repo.operation(lease["run_id"])["state"] == "rejected" and len(kube.calls) == 1
+
+
+def test_ordinary_retry_cannot_bypass_a_dispatched_operation(operation_case):
+    _, repo, state, lease, kube = operation_case
+    kube.mode = "timeout_applied"
+    with pytest.raises(OutcomeUnknown):
+        LedgerExecutor(kube.clients, repo, lease).execute(state)
+    with pytest.raises(UnsafeRetry):
+        repo.finish(lease, "retry_scheduled", retry_seconds=1, error_code="DEPENDENCY_TEMPORARY")
+    assert repo.latest(lease["incident_id"])["status"] == "running"
+    assert repo.operation(lease["run_id"])["state"] == "outcome_unknown"
 
 
 def test_heartbeat_failure_during_preparation_prevents_dispatch(operation_case, monkeypatch):

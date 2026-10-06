@@ -10,6 +10,10 @@ class LeaseLost(RuntimeError):
     pass
 
 
+class UnsafeRetry(RuntimeError):
+    """An ordinary retry must never clear an external-operation obligation."""
+
+
 class LeaseRepository(PostgresRunRepository):
     def announce(self, owner: str, seconds: float) -> None:
         with self._connect() as connection:
@@ -83,6 +87,10 @@ class LeaseRepository(PostgresRunRepository):
         if (status == "retry_scheduled") != (retry_seconds is not None):
             raise ValueError("retry delay is required only for retry_scheduled")
         with self.fence(lease) as connection:
+            if status == "retry_scheduled" and connection.execute("""SELECT operation_id
+                    FROM incident_agent_app.operations WHERE run_id=%s
+                    AND state NOT IN ('prepared','rejected')""", (lease["run_id"],)).fetchone():
+                raise UnsafeRetry("external operation requires reconciliation")
             connection.execute("""UPDATE incident_agent_app.runs SET status=%s,
                 last_error=%s,updated_at=clock_timestamp(),
                 finished_at=CASE WHEN %s IN ('succeeded','failed') THEN clock_timestamp() ELSE NULL END,
