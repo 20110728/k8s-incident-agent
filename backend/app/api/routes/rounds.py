@@ -64,6 +64,9 @@ def read_round(incident_id: IncidentId, run_id: IncidentId,
         result = snapshot_read(lambda: service.get_legacy_snapshot(incident_id))
         return {"result": _response_from_snapshot(result), "context": None, "parent_run_id": None}
     row = repo.get_round(incident_id, run_id)
+    if row["run_kind"] == "interaction":
+        from backend.app.services.interaction_schemas import interaction_view
+        return interaction_view(row)
     result = snapshot_read(lambda: service.get_run_snapshot(row))
     return {"result": _response_from_snapshot(result), "context": row["context_snapshot"],
             "parent_run_id": row["parent_run_id"], "source_message_id": row["source_message_id"],

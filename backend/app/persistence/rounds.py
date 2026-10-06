@@ -47,9 +47,12 @@ class RoundRepository(OperationRepository):
                                       ("incident-round:" + incident_id, key)).fetchone()
                 if replay:
                     return self._replay(replay, digest)
-                latest = conn.execute("SELECT * FROM incident_agent_app.runs WHERE incident_id=%s ORDER BY created_at DESC,run_id DESC LIMIT 1",
+                latest = conn.execute("SELECT * FROM incident_agent_app.runs WHERE incident_id=%s AND run_kind='diagnosis' ORDER BY created_at DESC,run_id DESC LIMIT 1",
                                       (incident_id,)).fetchone()
                 if (latest["run_id"] if latest else None) != parent_run_id:
+                    raise RoundConflict()
+                if conn.execute("""SELECT 1 FROM incident_agent_app.runs WHERE incident_id=%s
+                    AND run_kind='interaction' AND status NOT IN ('succeeded','failed','cancelled')""", (incident_id,)).fetchone():
                     raise RoundConflict()
                 if (latest and latest["status"] not in {"succeeded", "failed", "cancelled"}) or (
                     previous.get("phase") == "awaiting_approval" or previous.get("approval_status") == "pending"

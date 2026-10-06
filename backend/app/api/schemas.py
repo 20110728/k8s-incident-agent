@@ -48,7 +48,7 @@ class RunSummary(BaseModel):
     model_config = ConfigDict(extra="forbid")
     run_id: str
     status: Literal["queued", "running", "waiting_user", "waiting_approval", "retry_scheduled", "reconciling", "succeeded", "failed", "cancelled"]
-    run_kind: Literal["diagnosis"]
+    run_kind: Literal["diagnosis", "interaction"]
     created_at: datetime
     updated_at: datetime
     finished_at: datetime | None

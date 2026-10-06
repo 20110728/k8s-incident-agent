@@ -1,4 +1,4 @@
-# 4A-2：轮次与上下文（待 ECS 验收）
+# 4A-2：轮次与上下文（维护者已反馈 ECS 验收通过）
 
 新增迁移 8 `incident_rounds`：复用 diagnosis run_kind、parent_run_id/input_revision，补来源消息、消息截止序号、上下文及摘要、终态结果快照。新轮独立 thread，工作流版本 `incident-round-v1`；旧 `incident-v1` 恢复路径保留。审批标识/账本绑定新轮 run_id，旧审批不能授权新轮。终态报告冻结，原 legacy 检查点不重置。
 

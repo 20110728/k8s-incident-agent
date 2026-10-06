@@ -252,6 +252,19 @@ MIGRATIONS += (
 )
 
 
+MIGRATIONS += (
+    Migration(9, "interaction_tasks", (
+        "ALTER TABLE incident_agent_app.runs DROP CONSTRAINT runs_run_kind_check",
+        "ALTER TABLE incident_agent_app.runs ADD CONSTRAINT runs_run_kind_check CHECK (run_kind IN ('diagnosis','interaction'))",
+        "ALTER TABLE incident_agent_app.runs ADD COLUMN interaction_progress JSONB NOT NULL DEFAULT '{}'",
+        "DROP INDEX incident_agent_app.runs_one_active_per_incident",
+        """CREATE UNIQUE INDEX runs_one_active_per_incident ON incident_agent_app.runs(incident_id,run_kind)
+            WHERE status IN ('queued','running','waiting_user','waiting_approval','retry_scheduled','reconciling')""",
+        "ALTER TABLE incident_agent_app.rechecks ADD COLUMN run_id TEXT UNIQUE REFERENCES incident_agent_app.runs(run_id)",
+    )),
+)
+
+
 def run_migrations(
     connection: MigrationConnectionPort,
 ) -> list[int]:

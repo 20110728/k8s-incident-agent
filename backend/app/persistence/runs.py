@@ -119,7 +119,7 @@ class PostgresRunRepository:
         return rows[0] if rows else None
 
     def latest(self, incident_id: str) -> dict | None:
-        rows = self._read("SELECT * FROM incident_agent_app.runs WHERE incident_id=%s ORDER BY created_at DESC, run_id DESC LIMIT 1", (incident_id,))
+        rows = self._read("SELECT * FROM incident_agent_app.runs WHERE incident_id=%s AND run_kind='diagnosis' ORDER BY created_at DESC, run_id DESC LIMIT 1", (incident_id,))
         return rows[0] if rows else None
 
     def worker_available(self) -> bool:
@@ -191,7 +191,7 @@ class PostgresRunRepository:
             for row in page:
                 summaries = self._read("""SELECT run_id,status,run_kind,created_at,
                     updated_at,finished_at,attempt,last_error FROM incident_agent_app.runs
-                    WHERE incident_id=%s ORDER BY created_at DESC,run_id DESC LIMIT 1""", (row["incident_id"],))
+                    WHERE incident_id=%s AND run_kind='diagnosis' ORDER BY created_at DESC,run_id DESC LIMIT 1""", (row["incident_id"],))
                 row["run"] = run_summary(summaries[0] if summaries else None)
         else:
             page = [run_summary(row) for row in page]

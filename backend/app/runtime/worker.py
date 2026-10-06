@@ -16,7 +16,7 @@ from backend.app.agent.dependencies import (
 from backend.app.agent.graph import build_incident_graph
 from backend.app.persistence.database import connect_database
 from backend.app.persistence.leases import LeaseLost, UnsafeRetry
-from backend.app.persistence.operations import OperationRepository
+from backend.app.persistence.interactions import InteractionRepository
 from backend.app.persistence.migrations import run_migrations
 from backend.app.persistence.runs import request_digest
 from backend.app.persistence.settings import get_database_settings
@@ -74,12 +74,13 @@ def production_graph(settings, repository, lease, lost):
 
 
 class Worker:
-    def __init__(self, repository, graph_context, settings=None, owner=None, reconciler=None):
+    def __init__(self, repository, graph_context, settings=None, owner=None, reconciler=None, interaction_handler=None):
         get_failpoints()  # Reject unsafe injection before any worker IO.
         self.repository, self.graph_context = repository, graph_context
         self.settings = settings or WorkerSettings()
         self.owner = owner or str(uuid4())
         self.reconciler = reconciler or self._reconcile_operation
+        self.interaction_handler = interaction_handler
         self.stop = threading.Event()
         self.lost = threading.Event()
         self._lease = None
@@ -113,6 +114,14 @@ class Worker:
         # Older read-only test repositories have no ledger; production always does.
         reader = getattr(self.repository, "operation", None)
         return reader(lease["run_id"]) if reader else None
+
+    def _complete_interaction(self, lease, output, **kwargs):
+        # Coordinate terminal publication with heartbeat, as _finish does.
+        with self._lock:
+            if self.lost.is_set():
+                raise LeaseLost("heartbeat failed")
+            self.repository.complete(lease, output, **kwargs)
+            self._lease = None
 
     def _reconcile_operation(self, lease, operation):
         return LedgerExecutor(create_clients(disable_retries=True), self.repository, lease).reconcile(operation)
@@ -154,6 +163,12 @@ class Worker:
         config = {"configurable": {"thread_id": lease["thread_id"]}}
         reading_checkpoint = False
         try:
+            if lease.get("run_kind") == "interaction":
+                from backend.app.runtime.interactions import execute_interaction
+                (self.interaction_handler or execute_interaction)(
+                    self.repository, lease, self.lost, complete=self._complete_interaction)
+                report("succeeded", lease)
+                return
             # Recover external effects even if graph/checkpoint/LLM setup fails.
             if self._reconcile_pending(lease, recovering=True):
                 return
@@ -255,7 +270,7 @@ def main():
     connect = partial(connect_database, database)
     with connect() as connection:
         run_migrations(connection)
-    repository = OperationRepository(connect)
+    repository = InteractionRepository(connect)
     worker = Worker(repository, partial(production_graph, database, repository))
     for signum in (signal.SIGTERM, signal.SIGINT):
         signal.signal(signum, lambda *_: worker.stop.set())
