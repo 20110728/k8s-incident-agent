@@ -217,6 +217,29 @@ MIGRATIONS += (
 )
 
 
+MIGRATIONS += (
+    Migration(7, "incident_messages", (
+        """CREATE TABLE incident_agent_app.messages (
+            message_id TEXT PRIMARY KEY,
+            incident_id TEXT NOT NULL REFERENCES incident_agent_app.incidents(incident_id),
+            sequence BIGINT NOT NULL CHECK (sequence > 0),
+            client_message_id VARCHAR(128) NOT NULL,
+            role TEXT NOT NULL CHECK (role IN ('user','assistant','tool')),
+            source TEXT NOT NULL,
+            content TEXT NOT NULL CHECK (length(btrim(content)) BETWEEN 1 AND 16000),
+            related_run_id TEXT REFERENCES incident_agent_app.runs(run_id),
+            evidence_refs JSONB NOT NULL DEFAULT '[]',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+            UNIQUE (incident_id, sequence),
+            UNIQUE (incident_id, role, client_message_id),
+            CHECK ((role='user' AND source='user_supplied') OR
+                   (role='assistant' AND source='model_generated') OR
+                   (role='tool' AND source='tool_observed'))
+        )""",
+    )),
+)
+
+
 def run_migrations(
     connection: MigrationConnectionPort,
 ) -> list[int]:

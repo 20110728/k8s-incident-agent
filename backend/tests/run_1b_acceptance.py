@@ -34,6 +34,7 @@ def main():
     )
     stage3a = database.startswith("incident_agent_test_3a_")
     stage3b = database.startswith("incident_agent_test_3b_")
+    stage4a1 = database.startswith("incident_agent_test_4a1_")
     extra = list(STAGE2B_REGRESSION_TARGETS) if database.startswith("incident_agent_test_2b_") or stage3a else []
     if stage3a:
         extra += ["backend/tests/identity"]
@@ -41,6 +42,16 @@ def main():
         print("Regression scope: operation journal, approval, execution and business verification; not the full historical suite.", flush=True)
     stage2c = database.startswith("incident_agent_test_2c_")
     report = None
+    if stage4a1:
+        if not environment.get("INCIDENT_AGENT_TEST_AUDIT_DIR"):
+            return 2
+        report = Path(environment["INCIDENT_AGENT_TEST_AUDIT_DIR"]) / "junit.xml"
+        # Make the runner database itself an inspectable migration artifact.
+        from backend.app.persistence.database import connect_database
+        from backend.app.persistence.settings import DatabaseSettings
+        from backend.app.persistence.migrations import run_migrations
+        with connect_database(DatabaseSettings(database_url=environment["INCIDENT_AGENT_TEST_DATABASE_URL"])) as connection:
+            run_migrations(connection)
     if stage3b:
         if environment.get("STAGE3B_RBAC") != "1" or not environment.get("INCIDENT_AGENT_TEST_AUDIT_DIR"):
             print("3B requires the real credential acceptance wrapper.", file=sys.stderr)
@@ -59,11 +70,22 @@ def main():
         report = Path(environment["INCIDENT_AGENT_TEST_AUDIT_DIR"]) / "junit.xml"
     targets = (["backend/tests/persistence", "backend/tests/rbac"] if stage3b else
                ["backend/tests/persistence", "backend/tests/api", "backend/tests/runtime"])
+    if stage4a1:
+        targets = ["backend/tests/persistence", "backend/tests/messages"]
     result = subprocess.call([
         sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
     ] + targets + extra + (["--junitxml=" + str(report)] if report else []), env=environment)
-    if result or not (stage2c or stage3a or stage3b):
+    if result or not (stage2c or stage3a or stage3b or stage4a1):
         return result
+    if stage4a1:
+        cases = [case for case in ET.parse(report).iter("testcase")
+                 if case.attrib.get("name", "").startswith("test_4A1_")]
+        if len(cases) != 5 or any(case.find(tag) is not None for case in cases
+                                 for tag in ("skipped", "failure", "error")):
+            print("4A-1 real database/API/process checks incomplete", file=sys.stderr)
+            return 1
+        print("4A-1: message concurrency, API, history and process persistence passed.", flush=True)
+        return 0
     if stage3b:
         cases = [case for case in ET.parse(report).iter("testcase")
                  if case.attrib.get("name", "").startswith("test_3B_real_identity_matrix_and_approved_repair[")]

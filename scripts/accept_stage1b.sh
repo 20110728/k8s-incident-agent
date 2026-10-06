@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 STAGE="${1:-1b}"
-case "$STAGE" in 1b|2a|2b|2c|3a|3b) ;; *) echo 'Unsupported acceptance stage' >&2; exit 2 ;; esac
+case "$STAGE" in 1b|2a|2b|2c|3a|3b|4a1) ;; *) echo 'Unsupported acceptance stage' >&2; exit 2 ;; esac
 if [[ "$STAGE" == 3b && "${STAGE3B_RBAC:-0}" != 1 ]]; then
   echo '3B requires real credential checks; run bash scripts/accept_stage3b.sh' >&2
   exit 2
