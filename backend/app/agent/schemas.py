@@ -192,6 +192,9 @@ class RemediationParameters(BaseModel):
 class RemediationPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    # Filled from observed evidence by the server, never trusted from the model.
+    target_uid: str | None = Field(default=None, min_length=1, max_length=128)
+
     action: RemediationActionName
     parameters: RemediationParameters
 
@@ -235,6 +238,8 @@ class ApprovalRequest(BaseModel):
     )
     incident_id: str = Field(min_length=1)
     plan: RemediationPlan
+    plan_revision: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    approval_revision: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
 class ApprovalDecision(BaseModel):
@@ -273,6 +278,8 @@ class ApprovalRecord(BaseModel):
     approver: str = Field(min_length=1, max_length=100)
     comment: str = Field(default="", max_length=1000)
     decided_at: str = Field(min_length=1)
+    plan_revision: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    approval_revision: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 ExecutionStatus = Literal[
     "succeeded",

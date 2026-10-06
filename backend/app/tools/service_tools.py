@@ -107,6 +107,8 @@ def get_service_endpoint_slices(
 
             endpoints.append(
                 EndpointInfo(
+                    target_uid=getattr(target_ref, "uid", None),
+                    target_namespace=getattr(target_ref, "namespace", None),
                     addresses=endpoint.addresses or [],
                     ready=(conditions.ready if conditions is not None else None),
                     serving=(conditions.serving if conditions is not None else None),
@@ -121,6 +123,10 @@ def get_service_endpoint_slices(
 
         result.append(
             EndpointSliceInfo(
+                uid=getattr(endpoint_slice.metadata, "uid", None),
+                resource_version=getattr(endpoint_slice.metadata, "resource_version", None),
+                service_uid=next((owner.uid for owner in (getattr(endpoint_slice.metadata, "owner_references", None) or [])
+                                  if owner.kind == "Service" and owner.name == service_name), None),
                 namespace=namespace,
                 name=endpoint_slice.metadata.name,
                 service_name=service_name,

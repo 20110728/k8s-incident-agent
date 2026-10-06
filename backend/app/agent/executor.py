@@ -12,6 +12,7 @@ from backend.app.agent.execution_policy import (
     InvalidExecutionAuthorization,
     validate_execution_authorization,
 )
+from backend.app.agent.target_identity import observed_target_uid
 from backend.app.agent.schemas import (
     ActionExecutionResult,
     LabelPair,
@@ -85,6 +86,7 @@ class KubernetesRemediationExecutor:
     def _execute_service_selector(
         self,
         authorization: ExecutionAuthorization,
+        expected_uid: str,
     ) -> ResourceMutationResult:
         parameters = (
             authorization.plan.parameters
@@ -102,6 +104,7 @@ class KubernetesRemediationExecutor:
         )
 
         return self._patch_service_selector(
+            expected_uid=expected_uid,
             clients=self._clients,
             namespace=parameters.namespace,
             service_name=(
@@ -115,6 +118,7 @@ class KubernetesRemediationExecutor:
         self,
         authorization: ExecutionAuthorization,
         expected_resource_version: str,
+        expected_uid: str,
     ) -> ResourceMutationResult:
         parameters = (
             authorization.plan.parameters
@@ -151,6 +155,7 @@ class KubernetesRemediationExecutor:
             )
 
         return self._patch_readiness_probe(
+            expected_uid=expected_uid,
             expected_resource_version=expected_resource_version,
             clients=self._clients,
             namespace=parameters.namespace,
@@ -178,17 +183,18 @@ class KubernetesRemediationExecutor:
         self,
         authorization: ExecutionAuthorization,
         deployment_resource_version: str,
+        expected_uid: str,
     ) -> ResourceMutationResult:
         action = authorization.plan.action
 
         if action == "patch_service_selector":
             return self._execute_service_selector(
-                authorization
+                authorization, expected_uid
             )
 
         if action == "patch_readiness_probe":
             return self._execute_readiness_probe(
-                authorization, deployment_resource_version
+                authorization, deployment_resource_version, expected_uid
             )
 
         raise InvalidExecutionAuthorization(
@@ -223,9 +229,13 @@ class KubernetesRemediationExecutor:
         try:
             # 审批后可能发生发布或人工修改，必须在真正写入前重新检查现场。
             live = revalidate_live_profile(state, self._clients, authorization.plan)
+            try:
+                uid = authorization.plan.target_uid or observed_target_uid(state, authorization.plan)
+            except ValueError as exc:
+                raise ProfileUnavailable("TARGET_IDENTITY_MISSING: collect evidence and approve again") from exc
             mutation_result = (
                 self._execute_authorized_action(
-                    authorization, live["resource_version"]
+                    authorization, live["resource_version"], uid
                 )
             )
 

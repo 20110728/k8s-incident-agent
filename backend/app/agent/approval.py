@@ -18,6 +18,7 @@ from backend.app.agent.schemas import (
     RemediationPlan,
 )
 from backend.app.agent.state import IncidentState
+from backend.app.agent.target_identity import plan_payload, revision
 
 
 class InvalidApprovalRequest(ValueError):
@@ -67,11 +68,13 @@ def build_approval_request(state: IncidentState) -> ApprovalRequest:
     # 审批绑定的是具体快照；计划、配置或证据变化后必须重新计算审批请求。
     fingerprint_payload = {
         "incident_id": incident_id,
-        "remediation_plan": plan.model_dump(mode="json"),
+        "remediation_plan": plan_payload(plan),
     }
     if state.get("service_profile") is not None:
         fingerprint_payload["service_profile"] = state["service_profile"]
-    if (state.get("diagnosis") or {}).get("assessment") is not None:
+    if plan.target_uid:
+        fingerprint_payload["request"] = state.get("request")
+    if plan.target_uid or (state.get("diagnosis") or {}).get("assessment") is not None:
         fingerprint_payload["diagnosis"] = state["diagnosis"]
         fingerprint_payload["evidence"] = state.get("evidence", [])
     canonical_payload = json.dumps(
@@ -88,6 +91,8 @@ def build_approval_request(state: IncidentState) -> ApprovalRequest:
         approval_id=f"apr-{digest}",
         incident_id=incident_id,
         plan=plan,
+        plan_revision=revision(plan_payload(plan)) if plan.target_uid else None,
+        approval_revision=revision(fingerprint_payload) if plan.target_uid else None,
     )
 
 
@@ -122,6 +127,8 @@ def create_approval_record(
         approver=decision.approver,
         comment=decision.comment,
         decided_at=datetime.now(timezone.utc).isoformat(),
+        plan_revision=request.plan_revision,
+        approval_revision=request.approval_revision,
     )
 
 

@@ -32,11 +32,19 @@ def main():
     environment["INCIDENT_AGENT_TEST_DATABASE_URL"] = isolated_database_url(
         get_database_settings().database_url.get_secret_value(), database,
     )
-    extra = list(STAGE2B_REGRESSION_TARGETS) if database.startswith("incident_agent_test_2b_") else []
+    stage3a = database.startswith("incident_agent_test_3a_")
+    extra = list(STAGE2B_REGRESSION_TARGETS) if database.startswith("incident_agent_test_2b_") or stage3a else []
+    if stage3a:
+        extra += ["backend/tests/identity"]
     if extra:
-        print("2B scope: operation journal, approval, execution and business verification; not the full historical suite.", flush=True)
+        print("Regression scope: operation journal, approval, execution and business verification; not the full historical suite.", flush=True)
     stage2c = database.startswith("incident_agent_test_2c_")
     report = None
+    if stage3a:
+        if environment.get("STAGE3A_KIND") != "1" or not environment.get("INCIDENT_AGENT_TEST_AUDIT_DIR"):
+            print("3A requires the real kind acceptance wrapper.", file=sys.stderr)
+            return 2
+        report = Path(environment["INCIDENT_AGENT_TEST_AUDIT_DIR"]) / "junit.xml"
     if stage2c:
         if (environment.get("STAGE2C_RECOVERY") != "1" or environment.get("STAGE2B_KIND") != "1"
                 or not environment.get("INCIDENT_AGENT_TEST_AUDIT_DIR")):
@@ -47,8 +55,16 @@ def main():
         sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
         "backend/tests/persistence", "backend/tests/api", "backend/tests/runtime",
     ] + extra + (["--junitxml=" + str(report)] if report else []), env=environment)
-    if result or not stage2c:
+    if result or not (stage2c or stage3a):
         return result
+    if stage3a:
+        cases = [case for case in ET.parse(report).iter("testcase")
+                 if case.attrib.get("name", "").startswith("test_3A_approved_identity_guards_real_write[")]
+        if len(cases) != 5 or any(case.find(tag) is not None for case in cases for tag in ("skipped", "failure", "error")):
+            print("3A identity scenarios incomplete or skipped", file=sys.stderr)
+            return 1
+        print("3A: all 5 real identity scenarios passed.", flush=True)
+        return 0
     expected = {"R01": 1, "R02": 4, "R03": 1, "R04": 4, "R05": 2, "R06": 3}
     cases = list(ET.parse(report).iter("testcase"))
     counts = {key: sum(case.attrib.get("name", "").startswith("test_" + key + "_")

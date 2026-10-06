@@ -22,3 +22,5 @@ bash scripts/accept_stage2c.sh
 范围限制：调查/模型调用、发布画像和业务恢复结论使用测试替身，DB、审批 HTTP、租约、Service PATCH 是真实调用；R03 覆盖 waiting_approval；R06 注入存储调用失败，不停 PostgreSQL。客户端 PATCH 记录不是 Kubernetes 服务端审计。真实模型费用、业务闭环、生产 RBAC、数据库丢失灾备及历史遗留测试不在本块验证范围。
 
 复验修正：ECS 首轮 244 passed / 1 failed，新增日志污染子进程 stdout，导致 JSON 解析报 Extra data。现将日志写入 stderr，并断言 stdout 不被污染；原跨进程持久化测试保留。时间线继续收集两路输出。无配置、依赖或迁移变化；拉取后重跑同一命令，动态结果待复验。
+
+维护者已反馈复验成功，阶段 2 收尾，进入 3A。

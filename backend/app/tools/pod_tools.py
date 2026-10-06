@@ -113,6 +113,8 @@ def get_pod_status(
         )
 
     return PodInfo(
+        uid=getattr(pod.metadata, "uid", None),
+        resource_version=getattr(pod.metadata, "resource_version", None),
         namespace=namespace,
         name=pod.metadata.name,
         phase=pod.status.phase or "Unknown",

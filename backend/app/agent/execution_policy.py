@@ -237,6 +237,10 @@ def _validate_approval_binding(
             "remediation plan changed after approval"
         )
 
+    if (approval_request.plan_revision, approval_request.approval_revision) != (
+            approval_record.plan_revision, approval_record.approval_revision):
+        raise InvalidExecutionAuthorization("approval revisions do not match")
+
     if approval_record.action != plan.action:
         raise InvalidExecutionAuthorization(
             "approval record action does not match "

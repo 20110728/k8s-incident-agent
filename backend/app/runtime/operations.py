@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from kubernetes.client.exceptions import ApiException
 
 from backend.app.agent.execution_policy import validate_execution_authorization
+from backend.app.agent.target_identity import plan_payload
 from backend.app.agent.schemas import ActionExecutionResult, ResourceSnapshot
 from backend.app.persistence.operations import approval_binding, json_value
 from backend.app.persistence.leases import LeaseLost
@@ -103,7 +104,7 @@ class LedgerExecutor:
         if any(saved["decision"].get(key) != getattr(auth.approval_record, key)
                for key in ("approved", "approver", "comment")):
             raise ValueError("durable approval record does not match")
-        revision = request_digest(auth.plan.model_dump(mode="json"))
+        revision = request_digest(plan_payload(auth.plan))
         operation = self.repository.operation(self.lease["run_id"])
         if operation and (operation["approval_id"] != auth.approval_id or operation["plan_revision"] != revision):
             raise ValueError("operation authorization changed")

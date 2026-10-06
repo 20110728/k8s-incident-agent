@@ -314,6 +314,7 @@ def _service_snapshot(
     return ResourceSnapshot(
         namespace=namespace,
         resource_kind="Service",
+        uid=getattr(service.metadata, "uid", None),
         resource_name=service_name,
         resource_version=(
             _resource_version(service)
@@ -350,6 +351,8 @@ def _deployment_snapshot(
     return ResourceSnapshot(
         namespace=namespace,
         resource_kind="Deployment",
+        uid=getattr(deployment.metadata, "uid", None),
+        generation=getattr(deployment.metadata, "generation", None),
         resource_name=deployment_name,
         resource_version=(
             _resource_version(deployment)
@@ -497,6 +500,7 @@ def patch_service_selector(
     service_name: str,
     expected_selector: dict[str, str],
     proposed_selector: dict[str, str],
+    expected_uid: str | None = None,
 ) -> ResourceMutationResult:
     safe_namespace = _validate_namespace(
         namespace
@@ -551,6 +555,10 @@ def patch_service_selector(
             error_message=str(error),
         )
 
+    if expected_uid is not None and before_snapshot.uid != expected_uid:
+        return _conflict_result(error_code="TARGET_UID_CHANGED",
+            error_message="Service was recreated after approval.", before_snapshot=before_snapshot)
+
     current_selector = (
         before_snapshot.configuration[
             "selector"
@@ -590,6 +598,7 @@ def patch_service_selector(
 
     patch_body = {
         "metadata": {
+            **({"uid": expected_uid} if expected_uid is not None else {}),
             "resourceVersion": (
                 before_snapshot.resource_version
             ),
@@ -683,6 +692,7 @@ def patch_readiness_probe(
     expected_port: str | int,
     proposed_port: str | int,
     expected_resource_version: str | None = None,
+    expected_uid: str | None = None,
 ) -> ResourceMutationResult:
     safe_namespace = _validate_namespace(
         namespace
@@ -746,6 +756,10 @@ def patch_readiness_probe(
             error_message="Deployment changed since service profile validation.",
             before_snapshot=None,
         )
+
+    if expected_uid is not None and getattr(deployment.metadata, "uid", None) != expected_uid:
+        return _conflict_result(error_code="TARGET_UID_CHANGED",
+            error_message="Deployment was recreated after approval.", before_snapshot=None)
 
     container = _find_container(
         deployment,
@@ -863,6 +877,9 @@ def patch_readiness_probe(
             },
         },
     }
+
+    if expected_uid is not None:
+        patch_body["metadata"]["uid"] = expected_uid
 
     try:
         patched_deployment = (

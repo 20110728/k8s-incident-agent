@@ -153,12 +153,22 @@ def validate_profile_action(profile: ServiceProfile, plan) -> None:
 
 def revalidate_live_profile(state: dict, clients, plan) -> dict:
     from backend.app.tools.workload_tools import get_deployment_config
+    from backend.app.tools.service_tools import get_service
 
     profile = matched_profile(state)
     current = load_profile(profile.namespace, profile.service_name)
     if profile_digest(current) != state["service_profile"]["digest"]:
         raise ProfileUnavailable("SERVICE_PROFILE_CHANGED_AFTER_APPROVAL")
     validate_profile_action(current, plan)
+    if plan.target_uid:
+        services = [e.get("data", {}) for e in state.get("evidence", [])
+                    if e.get("resource_type") == "Service" and e.get("resource_name") == current.service_name
+                    and e.get("data", {}).get("namespace") == current.namespace]
+        if len(services) != 1 or not services[0].get("uid"):
+            raise ProfileUnavailable("SERVICE_IDENTITY_MISSING")
+        service = get_service(clients, current.namespace, current.service_name)
+        if service.uid != services[0]["uid"] or service.selector != services[0].get("selector"):
+            raise ProfileUnavailable("SERVICE_CHANGED_AFTER_APPROVAL")
     live = get_deployment_config(clients, current.namespace, current.deployment_name).model_dump(mode="json")
     if assess_profile(current, live):
         raise ProfileUnavailable("APPLICATION_CHANGED_AFTER_APPROVAL")

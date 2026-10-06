@@ -32,6 +32,7 @@ from backend.tests.agent.fakes import (
 
 def selector_plan() -> RemediationPlan:
     return RemediationPlan(
+        target_uid="fixture-service-uid",
         action="patch_service_selector",
         parameters=RemediationParameters(
             namespace="agent-demo",
@@ -70,6 +71,7 @@ def selector_plan() -> RemediationPlan:
 
 def readiness_plan() -> RemediationPlan:
     return RemediationPlan(
+        target_uid="fixture-deployment-uid",
         action="patch_readiness_probe",
         parameters=RemediationParameters(
             namespace="agent-demo",
@@ -295,6 +297,7 @@ def test_executor_dispatches_service_selector(
             "clients": executor._clients,
             "namespace": "agent-demo",
             "service_name": "order-service",
+            "expected_uid": "fixture-service-uid",
             "expected_selector": {
                 "app": "wrong-service",
             },
@@ -350,6 +353,7 @@ def test_executor_dispatches_readiness_probe(
             ),
             "container_name": "order-service",
             "expected_resource_version": "rv-1",
+            "expected_uid": "fixture-deployment-uid",
             "expected_path": (
                 "/wrong-health"
             ),

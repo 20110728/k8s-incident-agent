@@ -281,9 +281,13 @@ def test_response_committed_before_checkpoint_replays_result_only(operation_case
     assert len(kube.calls) == 1
 
 
-def test_approval_race_is_atomic_and_api_never_invokes_graph(storage):
+@pytest.mark.parametrize("bound", [False, True])
+def test_approval_race_is_atomic_and_api_never_invokes_graph(storage, bound):
     connect, repo, _ = storage
     state = state_with_uid()
+    if bound:
+        from backend.tests.identity.test_target_binding import bound_state
+        state = bound_state()
     row = waiting(repo, state)
     graph = FakeIncidentGraph()
     pending = {**state, "phase": "awaiting_approval", "approval_status": "pending", "approved": None, "approval_record": None}

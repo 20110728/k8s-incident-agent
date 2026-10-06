@@ -15,6 +15,7 @@ from backend.app.agent.schemas import (
     RemediationPlan,
 )
 from backend.app.agent.state import IncidentState
+from backend.app.agent.target_identity import bind_target
 from backend.app.service_profiles.registry import (
     ProfileUnavailable, matched_profile, validate_profile_action,
 )
@@ -597,6 +598,11 @@ def validate_remediation_plan(
         plan=plan,
         state=state,
     )
+    if plan.target_uid is not None:
+        try:
+            bind_target(plan, state)
+        except ValueError as exc:
+            raise InvalidRemediationPlan(str(exc)) from exc
     _validate_text_has_no_commands(plan)
     _validate_action_metadata(plan)
     if plan.action in EXECUTABLE_REMEDIATION_ACTIONS:
@@ -700,6 +706,12 @@ def prepare_remediation_plan(
                     ]
                 }
             )
+
+    if plan.action in EXECUTABLE_REMEDIATION_ACTIONS:
+        try:
+            plan = bind_target(plan, state)
+        except ValueError as exc:
+            raise InvalidRemediationPlan(str(exc)) from exc
 
     # 保留原有参数、引用、风险、审批和修复依据的全部校验。
     validated = validate_remediation_plan(plan=plan, state=state)

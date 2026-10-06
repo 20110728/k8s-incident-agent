@@ -40,6 +40,8 @@ def with_profile(state):
 
 def with_bundle_profile(bundle):
     profile, deployment = profile_and_deployment()
+    if bundle.get('service'):
+        bundle['service'].setdefault('uid', 'fixture-service-uid')
     bundle['deployments']['order-service'] = deployment
     bundle['service_profile'] = make_snapshot(profile, deployment)
     return bundle
