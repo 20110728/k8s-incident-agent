@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 
 
 def digest(value):
@@ -37,7 +38,8 @@ def report(event, lease=None, *, operation_id=None, node=None, error_code=None,
                "output_sha256": digest(output_value) if output_value is not None else None,
                "elapsed_ms": elapsed_ms}
     try:
-        print(json.dumps(payload), flush=True)
+        # Keep stdout available for machine-readable command results.
+        print(json.dumps(payload), file=sys.stderr, flush=True)
     except (OSError, ValueError):
         # A log sink failure must not change the result of a committed operation.
         pass

@@ -47,7 +47,9 @@ def test_telemetry_correlates_without_leaking_payload(capsys):
     secret = {"api_key": "sk-do-not-log", "dsn": "postgres://user:password@db/private", "prompt": "private prompt"}
     report("dependency_completed", lease(), node="diagnose", operation_id="op-test",
            input_value=secret, output_value={"answer": "private diagnosis"}, elapsed_ms=12)
-    output = capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert captured.out == ""  # Diagnostic events must not pollute JSON results.
+    output = captured.err
     assert all(value not in output for value in [*secret.values(), "private diagnosis", "password"])
     row = json.loads(output)
     assert (row["incident_id"], row["run_id"], row["thread_id"], row["epoch"], row["attempt"]) == ("incident", "run", "thread", 1, 1)
