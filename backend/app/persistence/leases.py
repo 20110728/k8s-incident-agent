@@ -36,7 +36,7 @@ class LeaseRepository(PostgresRunRepository):
                     ORDER BY created_at,run_id LIMIT 1 FOR UPDATE SKIP LOCKED""").fetchone()
                 if row is None:
                     return None
-                recovery_only = row["attempt"] >= max_attempts
+                recovery_only = row["attempt"] - row.get("attempt_base", 0) >= max_attempts
                 claimed = connection.execute("""UPDATE incident_agent_app.runs SET
                     status='running',lease_owner=%s,lease_epoch=lease_epoch+1,attempt=attempt+%s,
                     heartbeat_at=clock_timestamp(),lease_expires_at=clock_timestamp()+%s*interval '1 second',
@@ -53,6 +53,7 @@ class LeaseRepository(PostgresRunRepository):
             with connection.transaction():
                 # Bound a failed storage operation so it cannot pin a claim forever.
                 connection.execute("SET LOCAL lock_timeout = '5s'")
+                connection.execute("SELECT incident_id FROM incident_agent_app.incidents WHERE incident_id=%s FOR UPDATE", (lease["incident_id"],))
                 row = connection.execute("""SELECT run_id FROM incident_agent_app.runs
                     WHERE run_id=%s AND lease_owner=%s AND lease_epoch=%s
                       AND status='running' AND lease_expires_at>clock_timestamp()
@@ -82,19 +83,32 @@ class LeaseRepository(PostgresRunRepository):
 
     def finish(self, lease: dict, status: str, *, phase: str | None = None,
                error_code: str | None = None, retry_seconds: float | None = None,
-               output_snapshot: dict | None = None) -> None:
-        if status not in {"succeeded", "failed", "waiting_approval", "waiting_user", "retry_scheduled", "reconciling"}:
+               output_snapshot: dict | None = None, question: dict | None = None,
+               adopted_message_ids: list | None = None) -> str:
+        if status not in {"succeeded", "failed", "waiting_approval", "waiting_user", "retry_scheduled", "reconciling", "cancelled"}:
             raise ValueError("invalid worker result status")
         if (status == "retry_scheduled") != (retry_seconds is not None):
             raise ValueError("retry delay is required only for retry_scheduled")
         with self.fence(lease) as connection:
+            current = connection.execute("SELECT stop_requested FROM incident_agent_app.runs WHERE run_id=%s", (lease["run_id"],)).fetchone()
+            if current["stop_requested"] and status in {"succeeded", "failed", "waiting_user", "waiting_approval"}:
+                operation = connection.execute("SELECT state FROM incident_agent_app.operations WHERE run_id=%s", (lease["run_id"],)).fetchone()
+                status = "reconciling" if operation and operation["state"] in {"dispatching", "outcome_unknown", "manual_required"} else "cancelled"
+                phase = status
+                error_code = "CONTROL_PENDING_RECONCILIATION" if status == "reconciling" else "INPUT_SUPERSEDED"
+            if status == "waiting_user" and question:
+                connection.execute("UPDATE incident_agent_app.runs SET question_payload=%s,answer_payload=NULL WHERE run_id=%s", (Jsonb(question), lease["run_id"]))
+            elif status in {"succeeded", "failed", "cancelled"}:
+                connection.execute("UPDATE incident_agent_app.runs SET question_payload=NULL WHERE run_id=%s", (lease["run_id"],))
+            if adopted_message_ids is not None:
+                connection.execute("UPDATE incident_agent_app.runs SET adopted_message_ids=%s WHERE run_id=%s", (Jsonb(adopted_message_ids), lease["run_id"]))
             if status == "retry_scheduled" and connection.execute("""SELECT operation_id
                     FROM incident_agent_app.operations WHERE run_id=%s
                     AND state NOT IN ('prepared','rejected')""", (lease["run_id"],)).fetchone():
                 raise UnsafeRetry("external operation requires reconciliation")
             connection.execute("""UPDATE incident_agent_app.runs SET status=%s,
                 last_error=%s,updated_at=clock_timestamp(),
-                finished_at=CASE WHEN %s IN ('succeeded','failed') THEN clock_timestamp() ELSE NULL END,
+                finished_at=CASE WHEN %s IN ('succeeded','failed','cancelled') THEN clock_timestamp() ELSE NULL END,
                 next_retry_at=CASE WHEN %s::double precision IS NOT NULL THEN clock_timestamp()+%s*interval '1 second' ELSE NULL END,
                 lease_owner=NULL,lease_expires_at=NULL WHERE run_id=%s""",
                 (status, Jsonb({"code": error_code}) if error_code else None, status,
@@ -102,6 +116,7 @@ class LeaseRepository(PostgresRunRepository):
             if phase is not None:
                 connection.execute("UPDATE incident_agent_app.incidents SET phase=%s,updated_at=clock_timestamp() WHERE incident_id=%s",
                                    (phase, lease["incident_id"]))
-            if output_snapshot is not None and status in {"succeeded", "failed"}:
+            if output_snapshot is not None and status in {"succeeded", "failed", "cancelled"}:
                 connection.execute("UPDATE incident_agent_app.runs SET output_snapshot=COALESCE(output_snapshot,%s) WHERE run_id=%s",
                                    (Jsonb(output_snapshot), lease["run_id"]))
+        return status

@@ -32,7 +32,8 @@ def status(incident_id: IncidentId, repo=Depends(get_interaction_repository)):
 def find(incident_id: IncidentId, client_message_id: str = Query(min_length=1, max_length=128), repo=Depends(get_interaction_repository)):
     row = repo.by_interaction_key(incident_id, client_message_id)
     if row is None:
-        raise RoundNotFound()
+        from backend.app.persistence.controls import ControlRepository
+        return ControlRepository(repo._connect).find_control(incident_id, client_message_id)
     return interaction_view(row)
 
 
@@ -55,8 +56,21 @@ def create(incident_id: IncidentId, body: CreateInteraction, request: Request, r
     replay = repo.by_interaction_key(incident_id, body.client_message_id)
     if replay:
         return interaction_view(repo._replay(replay, request_digest(body.model_dump())))
-    service = get_incident_service(request)
     prior = repo.latest(incident_id)
+    explicit_stop = body.intent == "stop" or (body.intent == "auto" and body.content.strip() in {"先别查了", "停止调查", "停止", "stop"})
+    saved_control = repo._read("SELECT control_id FROM incident_agent_app.controls WHERE incident_id=%s AND client_message_id=%s", (incident_id, body.client_message_id))
+    if saved_control and not explicit_stop and body.intent not in {"supplement", "investigate"}:
+        from backend.app.persistence.runs import IdempotencyConflict
+        raise IdempotencyConflict()
+    if saved_control or explicit_stop or (body.intent in {"supplement", "investigate"} and prior and
+                         (prior["status"] not in {"succeeded", "failed", "cancelled"} or prior.get("invalidated_at"))):
+        from backend.app.api.routes.controls import control
+        from backend.app.persistence.controls import ControlRepository
+        from backend.app.services.control_schemas import ControlRequest
+        command = ControlRequest(client_message_id=body.client_message_id, content=body.content,
+                                 action="stop" if explicit_stop else body.intent)
+        return control(incident_id, command, request, ControlRepository(repo._connect))
+    service = get_incident_service(request)
 
     def reference(run_id):
         row = repo.get_round(incident_id, run_id) if run_id and run_id != "legacy" else None

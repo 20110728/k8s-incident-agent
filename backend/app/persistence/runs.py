@@ -73,6 +73,8 @@ def run_summary(row: dict | None) -> dict | None:
     error = row.get("last_error")
     code = error.get("code") if isinstance(error, dict) else None
     result["last_error_code"] = code if isinstance(code, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", code) else None
+    result.update(stop_requested=row.get("stop_requested", False), invalidated_at=row.get("invalidated_at"),
+                  question=row.get("question_payload"), adopted_message_ids=row.get("adopted_message_ids", []))
     return result
 
 
@@ -125,7 +127,7 @@ class PostgresRunRepository:
     def worker_available(self) -> bool:
         return self._read("SELECT EXISTS (SELECT 1 FROM incident_agent_app.workers WHERE expires_at>clock_timestamp()) AS available")[0]["available"]
 
-    def accept(self, *, incident_id: str, run_id: str, thread_id: str, payload: dict, key: str | None) -> dict:
+    def accept(self, *, incident_id: str, run_id: str, thread_id: str, payload: dict, key: str | None, dialogue: bool = False) -> dict:
         validate_key(key)
         digest = request_digest(payload)
         if key is not None:
@@ -145,6 +147,11 @@ class PostgresRunRepository:
                             VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
                             (run_id, incident_id, thread_id, Jsonb(payload), digest, SCOPE if key is not None else None, key, digest))
                         row = cursor.fetchone()
+                        if dialogue:
+                            from backend.app.services.round_context import DIALOGUE_WORKFLOW
+                            cursor.execute("""UPDATE incident_agent_app.runs SET workflow_version=%s,context_snapshot='{}',context_sha256=%s
+                                WHERE run_id=%s RETURNING *""", (DIALOGUE_WORKFLOW, request_digest({}), run_id))
+                            row = cursor.fetchone()
             # Both transaction and connection contexts have committed before returning.
             report("accepted", row)
             hit("after_accept", row)
@@ -175,7 +182,7 @@ class PostgresRunRepository:
             fields = "t.incident_id,t.namespace,t.service_name,t.phase,t.created_at,t.updated_at"
         else:
             table, id_field = "runs", "run_id"
-            fields = "t.run_id,t.status,t.run_kind,t.created_at,t.updated_at,t.finished_at,t.attempt,t.last_error"
+            fields = "t.run_id,t.status,t.run_kind,t.created_at,t.updated_at,t.finished_at,t.attempt,t.last_error,t.stop_requested,t.invalidated_at,t.question_payload,t.adopted_message_ids"
             if not self._read("SELECT incident_id FROM incident_agent_app.incidents WHERE incident_id=%s", (incident_id,)):
                 raise RunNotFound()
             conditions.append("t.incident_id=%s")
@@ -190,7 +197,7 @@ class PostgresRunRepository:
         if incident_id is None:
             for row in page:
                 summaries = self._read("""SELECT run_id,status,run_kind,created_at,
-                    updated_at,finished_at,attempt,last_error FROM incident_agent_app.runs
+                    updated_at,finished_at,attempt,last_error,stop_requested,invalidated_at,question_payload,adopted_message_ids FROM incident_agent_app.runs
                     WHERE incident_id=%s AND run_kind='diagnosis' ORDER BY created_at DESC,run_id DESC LIMIT 1""", (row["incident_id"],))
                 row["run"] = run_summary(summaries[0] if summaries else None)
         else:

@@ -6,7 +6,7 @@ from psycopg.types.json import Jsonb
 
 from backend.app.persistence.operations import OperationRepository, json_value
 from backend.app.persistence.runs import RunError, request_digest, validate_key
-from backend.app.services.round_context import build_round_context, ROUND_WORKFLOW
+from backend.app.services.round_context import build_round_context, DIALOGUE_WORKFLOW
 
 
 class RoundConflict(RunError):
@@ -54,8 +54,9 @@ class RoundRepository(OperationRepository):
                 if conn.execute("""SELECT 1 FROM incident_agent_app.runs WHERE incident_id=%s
                     AND run_kind='interaction' AND status NOT IN ('succeeded','failed','cancelled')""", (incident_id,)).fetchone():
                     raise RoundConflict()
+                invalidated = latest and latest["status"] == "cancelled" and latest.get("invalidated_at")
                 if (latest and latest["status"] not in {"succeeded", "failed", "cancelled"}) or (
-                    previous.get("phase") == "awaiting_approval" or previous.get("approval_status") == "pending"
+                    (not invalidated and (previous.get("phase") == "awaiting_approval" or previous.get("approval_status") == "pending"))
                 ):
                     raise RoundConflict()
                 if not latest and previous.get("approved") and previous.get("phase") != "verification_succeeded":
@@ -85,12 +86,12 @@ class RoundRepository(OperationRepository):
                 row = conn.execute("""INSERT INTO incident_agent_app.runs
                     (run_id,incident_id,thread_id,parent_run_id,input_revision,input_payload,input_sha256,
                      workflow_version,idempotency_scope,idempotency_key,request_sha256,
-                     source_message_id,input_message_sequence,context_snapshot,context_sha256)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
+                     source_message_id,input_message_sequence,context_snapshot,context_sha256,event_revision)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
                     (run_id, incident_id, thread_id, parent_run_id,
-                     latest["input_revision"] + 1 if latest else 1, Jsonb(payload), request_digest(payload), ROUND_WORKFLOW,
+                     latest["input_revision"] + 1 if latest else 1, Jsonb(payload), request_digest(payload), DIALOGUE_WORKFLOW,
                      "incident-round:" + incident_id, key, digest, message_id, message["sequence"],
-                     Jsonb(context), request_digest(context))).fetchone()
+                     Jsonb(context), request_digest(context), incident["event_revision"])).fetchone()
                 # Old terminal output is frozen before the new run becomes visible.
                 if latest and latest["output_snapshot"] is None:
                     conn.execute("UPDATE incident_agent_app.runs SET output_snapshot=%s WHERE run_id=%s",

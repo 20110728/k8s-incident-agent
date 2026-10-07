@@ -26,6 +26,7 @@ class MessageDraft(CreateMessage):
 
 
 class MessageRecord(MessageDraft):
+    adopted_by_run_ids: list[str] = Field(default_factory=list)
     message_id: str
     incident_id: str
     sequence: int

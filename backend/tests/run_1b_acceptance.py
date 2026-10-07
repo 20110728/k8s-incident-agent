@@ -37,6 +37,7 @@ def main():
     stage4a1 = database.startswith("incident_agent_test_4a1_")
     stage4a2 = database.startswith("incident_agent_test_4a2_")
     stage4b1 = database.startswith("incident_agent_test_4b1_")
+    stage4b2 = database.startswith("incident_agent_test_4b2_")
     if stage4b1 and environment.get("STAGE4B1_LIVE_MODEL") != "1":
         print("4B-1 requires the live model acceptance wrapper.", file=sys.stderr)
         return 2
@@ -47,7 +48,7 @@ def main():
         print("Regression scope: operation journal, approval, execution and business verification; not the full historical suite.", flush=True)
     stage2c = database.startswith("incident_agent_test_2c_")
     report = None
-    if stage4a1 or stage4a2 or stage4b1:
+    if stage4a1 or stage4a2 or stage4b1 or stage4b2:
         if not environment.get("INCIDENT_AGENT_TEST_AUDIT_DIR"):
             return 2
         report = Path(environment["INCIDENT_AGENT_TEST_AUDIT_DIR"]) / "junit.xml"
@@ -79,18 +80,29 @@ def main():
         targets = ["backend/tests/persistence", "backend/tests/messages",
                    "backend/tests/api/test_validation_errors.py",
                    "backend/tests/api/test_incidents_api.py", "backend/tests/api/test_system_api.py"]
-    if stage4a2 or stage4b1:
+    if stage4a2 or stage4b1 or stage4b2:
         targets = ["backend/tests/persistence", "backend/tests/messages", "backend/tests/rounds",
                    "backend/tests/api", "backend/tests/runtime/test_recovery.py",
                    "backend/tests/runtime/test_worker_postgres.py", "backend/tests/runtime/test_operations_postgres.py",
                    "backend/tests/agent/test_approval.py", "backend/tests/agent/test_graph_human_approval.py"]
     if stage4b1:
         targets += ["backend/tests/interactions"]
+    if stage4b2:
+        targets += ["backend/tests/interactions/test_interactions.py", "backend/tests/dialogue"]
     result = subprocess.call([
         sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
     ] + targets + extra + (["--junitxml=" + str(report)] if report else []), env=environment)
-    if result or not (stage2c or stage3a or stage3b or stage4a1 or stage4a2 or stage4b1):
+    if result or not (stage2c or stage3a or stage3b or stage4a1 or stage4a2 or stage4b1 or stage4b2):
         return result
+    if stage4b2:
+        cases = [case for case in ET.parse(report).iter("testcase")
+                 if case.attrib.get("name", "").startswith("test_4B2_")]
+        if len(cases) != 11 or any(case.find(tag) is not None for case in cases
+                                  for tag in ("skipped", "failure", "error")):
+            print("4B-2 question/control/dispatch acceptance incomplete", file=sys.stderr)
+            return 1
+        print("4B-2: durable questions, stop controls and dispatch arbitration passed.", flush=True)
+        return 0
     if stage4b1:
         cases = [case for case in ET.parse(report).iter("testcase")
                  if case.attrib.get("name", "").startswith("test_4B1_")]

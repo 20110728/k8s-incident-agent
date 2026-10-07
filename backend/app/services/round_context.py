@@ -2,6 +2,8 @@
 from backend.app.llm.context_builder import redact_sensitive_text, serialize_limited
 
 ROUND_WORKFLOW = "incident-round-v1"
+DIALOGUE_WORKFLOW = "incident-dialogue-v1"
+ROUND_WORKFLOWS = frozenset({ROUND_WORKFLOW, DIALOGUE_WORKFLOW})
 
 
 def build_round_context(messages, previous, parent_run_id, legacy_thread_id):

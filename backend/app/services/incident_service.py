@@ -86,6 +86,8 @@ class IncidentSnapshot:
 
     @property
     def phase(self) -> str:
+        if self.run and self.run["status"] == "cancelled":
+            return "cancelled"
         value = self.state.get("phase")
         return value if isinstance(value, str) else "unknown"
 
@@ -202,7 +204,7 @@ class IncidentApplicationService:
         if self._execution_mode == "queued":
             row = self._runs.accept(
                 incident_id=self._id_factory(), run_id=_new_id(), thread_id=_new_id(),
-                payload=validated_request.model_dump(mode="json"), key=idempotency_key,
+                payload=validated_request.model_dump(mode="json"), key=idempotency_key, dialogue=True,
             )
             return self._snapshot_for_run(row)
         if idempotency_key is not None:
@@ -433,6 +435,7 @@ class IncidentApplicationService:
             if saved:
                 if saved["decision"] != validated_decision.model_dump(mode="json"):
                     raise IncidentApprovalConflictError("approval has already been decided differently")
+                self._runs.queue_approval(row["run_id"], saved["decision"], saved["binding"])
                 return current
         raw_record = state.get("approval_record")
 

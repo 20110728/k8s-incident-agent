@@ -48,6 +48,7 @@ def build_incident_service(
             collector=disabled, retriever=disabled, diagnoser=disabled,
             planner=disabled, executor=disabled, verifier=disabled,
             checkpointer=checkpointer,
+            dialogue=True,
         )
         return IncidentApplicationService(
             _ReadOnlyGraph(graph), repository, runs=runs, execution_mode=execution_mode,

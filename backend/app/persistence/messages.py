@@ -75,9 +75,11 @@ class PostgresMessageRepository:
                 if conn.execute("SELECT 1 FROM incident_agent_app.incidents WHERE incident_id=%s",
                                 (incident_id,)).fetchone() is None:
                     raise MessageError("INCIDENT_NOT_FOUND", 404)
-                rows = conn.execute("""SELECT * FROM incident_agent_app.messages
-                    WHERE incident_id=%s AND (%s::bigint IS NULL OR sequence<%s)
-                    ORDER BY sequence DESC LIMIT %s""",
+                rows = conn.execute("""SELECT m.*, ARRAY(SELECT r.run_id FROM incident_agent_app.runs r
+                    WHERE r.incident_id=m.incident_id AND r.adopted_message_ids ? m.message_id) AS adopted_by_run_ids
+                    FROM incident_agent_app.messages m
+                    WHERE m.incident_id=%s AND (%s::bigint IS NULL OR m.sequence<%s)
+                    ORDER BY m.sequence DESC LIMIT %s""",
                     (incident_id, before_sequence, before_sequence, limit + 1)).fetchall()
             return MessagePage(items=rows[:limit], next_before_sequence=(
                 rows[limit - 1]["sequence"] if len(rows) > limit else None))

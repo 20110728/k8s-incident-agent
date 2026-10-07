@@ -265,6 +265,29 @@ MIGRATIONS += (
 )
 
 
+MIGRATIONS += (
+    Migration(10, "dialogue_controls", (
+        "ALTER TABLE incident_agent_app.incidents ADD COLUMN event_revision BIGINT NOT NULL DEFAULT 0",
+        "ALTER TABLE incident_agent_app.runs ADD COLUMN event_revision BIGINT NOT NULL DEFAULT 0",
+        "ALTER TABLE incident_agent_app.runs ADD COLUMN stop_requested BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE incident_agent_app.runs ADD COLUMN invalidated_at TIMESTAMPTZ",
+        "ALTER TABLE incident_agent_app.runs ADD COLUMN question_payload JSONB",
+        "ALTER TABLE incident_agent_app.runs ADD COLUMN answer_payload JSONB",
+        "ALTER TABLE incident_agent_app.runs ADD COLUMN adopted_message_ids JSONB NOT NULL DEFAULT '[]'",
+        "ALTER TABLE incident_agent_app.runs ADD COLUMN attempt_base INTEGER NOT NULL DEFAULT 0",
+        """CREATE TABLE incident_agent_app.controls (
+            control_id TEXT PRIMARY KEY, incident_id TEXT NOT NULL REFERENCES incident_agent_app.incidents(incident_id),
+            client_message_id TEXT NOT NULL, request_sha256 TEXT NOT NULL, request JSONB NOT NULL,
+            message_id TEXT NOT NULL REFERENCES incident_agent_app.messages(message_id),
+            parent_run_id TEXT REFERENCES incident_agent_app.runs(run_id), snapshot JSONB NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('saved','pending','started','superseded')),
+            result JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+            UNIQUE(incident_id,client_message_id))""",
+        "CREATE INDEX controls_pending_idx ON incident_agent_app.controls(created_at) WHERE status='pending'",
+    )),
+)
+
+
 def run_migrations(
     connection: MigrationConnectionPort,
 ) -> list[int]:

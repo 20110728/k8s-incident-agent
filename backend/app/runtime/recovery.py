@@ -8,19 +8,19 @@ from psycopg import OperationalError
 
 from backend.app.persistence.runs import request_digest
 from backend.app.persistence.operations import approval_binding, json_value
-from backend.app.services.round_context import ROUND_WORKFLOW
+from backend.app.services.round_context import ROUND_WORKFLOWS, DIALOGUE_WORKFLOW
 
 
 READ_ONLY_NODES = frozenset({
     "validate_request", "plan_collection", "collect_evidence", "retrieve_runbooks",
     "diagnose_incident", "plan_remediation", "skip_remediation", "prepare_approval",
-    "request_human_approval", "finish_failure",
+    "request_human_approval", "finish_failure", "prepare_clarification", "await_user_input",
 })
 
 
 @dataclass(frozen=True)
 class RecoveryDecision:
-    action: Literal["start", "continue", "resume", "stop"]
+    action: Literal["start", "continue", "resume", "resume_user", "stop"]
     status: str | None = None
     error_code: str | None = None
 
@@ -37,10 +37,10 @@ def transient(error: Exception) -> bool:
 
 def classify(lease: dict, snapshot, operation=None) -> RecoveryDecision:
     stop = lambda status, code=None: RecoveryDecision("stop", status, code)
-    if (lease["workflow_version"] not in {"incident-v1", ROUND_WORKFLOW} or
+    if (lease["workflow_version"] not in {"incident-v1", *ROUND_WORKFLOWS} or
             request_digest(lease["input_payload"]) != lease["input_sha256"]):
         return stop("failed", "UNSUPPORTED_OR_CORRUPT_INPUT")
-    if lease["workflow_version"] == ROUND_WORKFLOW and (
+    if lease["workflow_version"] in ROUND_WORKFLOWS and (
         not isinstance(lease.get("context_snapshot"), dict) or
         request_digest(lease["context_snapshot"]) != lease.get("context_sha256")
     ):
@@ -57,7 +57,7 @@ def classify(lease: dict, snapshot, operation=None) -> RecoveryDecision:
         return stop("failed", "CHECKPOINT_IDENTITY_MISMATCH")
     if state.get("request") != lease["input_payload"]:
         return stop("failed", "CHECKPOINT_INPUT_MISMATCH")
-    if lease["workflow_version"] == ROUND_WORKFLOW and (
+    if lease["workflow_version"] in ROUND_WORKFLOWS and (
         state.get("round_context") != lease["context_snapshot"] or state.get("run_id") != lease["run_id"]
     ):
         return stop("failed", "CHECKPOINT_INPUT_MISMATCH")
@@ -80,6 +80,18 @@ def classify(lease: dict, snapshot, operation=None) -> RecoveryDecision:
             return stop("reconciling", "OPERATION_RESULT_MISMATCH")
     phase = str(state.get("phase") or "unknown")
     if any(getattr(task, "interrupts", ()) for task in tasks):
+        if lease["workflow_version"] == DIALOGUE_WORKFLOW and phase == "waiting_user" and pending == ("await_user_input",):
+            question = state.get("question") or {}
+            answer = lease.get("answer_payload")
+            # A checkpoint may already contain the previous reply and the next
+            # question, even if the worker crashed before projecting that wait.
+            if answer and answer in state.get("clarification_answers", []):
+                answer = None
+            if answer:
+                if any(answer.get(key) != question.get(key) for key in ("question_id", "version")):
+                    return stop("failed", "QUESTION_VERSION_MISMATCH")
+                return RecoveryDecision("resume_user")
+            return stop("waiting_user")
         if phase == "awaiting_approval" and state.get("approval_status") == "pending":
             if saved and pending == ("request_human_approval",):
                 return RecoveryDecision("resume")

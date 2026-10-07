@@ -32,11 +32,23 @@ def approval_binding(state):
     return request_digest(payload)
 
 
+def assert_revision(connection, run_id):
+    current = connection.execute("""SELECT r.stop_requested,r.event_revision AS accepted_revision,i.event_revision AS current_revision
+        FROM incident_agent_app.runs r JOIN incident_agent_app.incidents i USING(incident_id) WHERE run_id=%s""", (run_id,)).fetchone()
+    if current is None or current["stop_requested"] or current["accepted_revision"] != current["current_revision"]:
+        raise ApprovalConflict()
+
+
 class OperationRepository(LeaseRepository):
     def queue_approval(self, run_id, decision, binding):
         payload = {"decision": decision, "binding": binding}
         with self._connect() as connection:
+            target = connection.execute("SELECT incident_id FROM incident_agent_app.runs WHERE run_id=%s", (run_id,)).fetchone()
+            if target is None:
+                raise ApprovalConflict()
+            connection.execute("SELECT 1 FROM incident_agent_app.incidents WHERE incident_id=%s FOR UPDATE", (target["incident_id"],))
             row = connection.execute("SELECT * FROM incident_agent_app.runs WHERE run_id=%s FOR UPDATE", (run_id,)).fetchone()
+            assert_revision(connection, run_id)
             if row is None:
                 raise ApprovalConflict()
             if row["approval_payload"] is not None:
@@ -49,7 +61,7 @@ class OperationRepository(LeaseRepository):
                 WHERE incident_id=%s AND state IN ('prepared','dispatching','outcome_unknown','manual_required')""", (row["incident_id"],)).fetchone():
                 raise ApprovalConflict()
             connection.execute("""UPDATE incident_agent_app.runs SET approval_payload=%s,status='queued',
-                updated_at=clock_timestamp() WHERE run_id=%s""", (Jsonb(payload), run_id))
+                attempt_base=attempt,updated_at=clock_timestamp() WHERE run_id=%s""", (Jsonb(payload), run_id))
         report("approval_saved", row, input_value=payload)
 
     def operation(self, run_id):
@@ -73,6 +85,7 @@ class OperationRepository(LeaseRepository):
                 WHERE incident_id=%s AND run_id<>%s AND state IN ('prepared','dispatching','outcome_unknown','manual_required')""",
                 (lease["incident_id"], lease["run_id"])).fetchone():
                 raise ApprovalConflict()
+            assert_revision(connection, lease["run_id"])
             existing = connection.execute("SELECT * FROM incident_agent_app.operations WHERE run_id=%s", (lease["run_id"],)).fetchone()
             if existing:
                 if existing["operation_id"] != operation_id:
@@ -88,6 +101,7 @@ class OperationRepository(LeaseRepository):
 
     def dispatch(self, lease, operation_id):
         with self.fence(lease) as connection:
+            assert_revision(connection, lease["run_id"])
             row = connection.execute("""UPDATE incident_agent_app.operations SET state='dispatching',
                 lease_epoch=%s,dispatched_at=clock_timestamp(),updated_at=clock_timestamp()
                 WHERE operation_id=%s AND run_id=%s AND state='prepared' RETURNING operation_id""",

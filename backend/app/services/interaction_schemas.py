@@ -11,7 +11,7 @@ Intent = Literal["status", "explain", "compare", "supplement", "investigate", "r
 
 
 class CreateInteraction(CreateMessage):
-    intent: Literal["auto", "status", "explain", "compare", "supplement", "investigate", "recheck"] = "auto"
+    intent: Literal["auto", "status", "explain", "compare", "supplement", "investigate", "recheck", "stop"] = "auto"
     reference_run_id: str | None = Field(default=None, min_length=1, max_length=128, pattern=r"^[A-Za-z0-9-]+$")
     compare_run_id: str | None = Field(default=None, min_length=1, max_length=128, pattern=r"^[A-Za-z0-9-]+$")
 

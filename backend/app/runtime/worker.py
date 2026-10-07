@@ -16,7 +16,7 @@ from backend.app.agent.dependencies import (
 from backend.app.agent.graph import build_incident_graph
 from backend.app.persistence.database import connect_database
 from backend.app.persistence.leases import LeaseLost, UnsafeRetry
-from backend.app.persistence.interactions import InteractionRepository
+from backend.app.persistence.controls import ControlRepository
 from backend.app.persistence.migrations import run_migrations
 from backend.app.persistence.runs import request_digest
 from backend.app.persistence.settings import get_database_settings
@@ -27,7 +27,7 @@ from backend.app.runtime.operations import LedgerExecutor
 from backend.app.tools.client import create_clients
 from backend.app.runtime.telemetry import report
 from backend.app.runtime.failpoints import get_failpoints, hit
-from backend.app.services.round_context import ROUND_WORKFLOW
+from backend.app.services.round_context import ROUND_WORKFLOWS, DIALOGUE_WORKFLOW
 from backend.app.persistence.operations import json_value
 
 
@@ -70,6 +70,7 @@ def production_graph(settings, repository, lease, lost):
             executor=owned(LedgerExecutor(create_clients(disable_retries=True), repository, lease, lost)),
             verifier=owned(build_recovery_verifier()),
             checkpointer=saver,
+            dialogue=lease["workflow_version"] == DIALOGUE_WORKFLOW,
         )
 
 
@@ -103,7 +104,7 @@ class Worker:
         with self._lock:
             if self.lost.is_set():
                 raise LeaseLost("heartbeat failed")
-            self.repository.finish(lease, status, **kwargs)
+            status = self.repository.finish(lease, status, **kwargs) or status
             self._lease = None
         report(status, lease, error_code=kwargs.get("error_code"),
                error_class={"retry_scheduled": "transient", "reconciling": "outcome_unknown",
@@ -156,7 +157,10 @@ class Worker:
             self._finish(lease, "failed", error_code="INCOMPLETE_WORKFLOW")
             return
         self._finish(lease, decision.status, phase=str((snapshot.values or {}).get("phase") or "failed"),
-                     **({"output_snapshot": json_value(snapshot.values)} if lease["workflow_version"] == ROUND_WORKFLOW and snapshot.values else {}),
+                     output_snapshot=json_value(snapshot.values) if snapshot.values else None,
+                     question=(snapshot.values or {}).get("question"),
+                     adopted_message_ids=[m["message_id"] for m in (snapshot.values or {}).get("round_context", {}).get("messages", [])]
+                        + [a["message_id"] for a in (snapshot.values or {}).get("clarification_answers", [])],
                      **({"error_code": decision.error_code} if decision.error_code else {}))
 
     def execute(self, lease):
@@ -172,10 +176,10 @@ class Worker:
             # Recover external effects even if graph/checkpoint/LLM setup fails.
             if self._reconcile_pending(lease, recovering=True):
                 return
-            if lease["workflow_version"] not in {"incident-v1", ROUND_WORKFLOW} or request_digest(lease["input_payload"]) != lease["input_sha256"]:
+            if lease["workflow_version"] not in {"incident-v1", *ROUND_WORKFLOWS} or request_digest(lease["input_payload"]) != lease["input_sha256"]:
                 self._finish(lease, "failed", error_code="UNSUPPORTED_OR_CORRUPT_INPUT")
                 return
-            if lease["workflow_version"] == ROUND_WORKFLOW and (
+            if lease["workflow_version"] in ROUND_WORKFLOWS and (
                 not isinstance(lease.get("context_snapshot"), dict) or
                 request_digest(lease["context_snapshot"]) != lease.get("context_sha256")
             ):
@@ -193,12 +197,13 @@ class Worker:
                 if lease.get("recovery_only"):
                     self._finish(lease, "failed", error_code="ATTEMPTS_EXHAUSTED")
                     return
-                report("resume" if decision.action in {"continue", "resume"} else "start", lease)
+                report("resume" if decision.action in {"continue", "resume", "resume_user"} else "start", lease)
                 self.repository.assert_owned(lease)
-                input_value = (Command(resume=lease["approval_payload"]["decision"]) if decision.action == "resume" else
+                input_value = (Command(resume=lease["answer_payload"]) if decision.action == "resume_user" else
+                               Command(resume=lease["approval_payload"]["decision"]) if decision.action == "resume" else
                                None if decision.action == "continue" else
                                {"incident_id": lease["incident_id"], "request": lease["input_payload"]})
-                if decision.action == "start" and lease["workflow_version"] == ROUND_WORKFLOW:
+                if decision.action == "start" and lease["workflow_version"] in ROUND_WORKFLOWS:
                     input_value["round_context"] = lease["context_snapshot"]
                     input_value["run_id"] = lease["run_id"]
                 graph.invoke(input_value, config=config)
@@ -210,7 +215,7 @@ class Worker:
             try:
                 if self._reconcile_pending(lease):
                     return
-                if transient(error) and lease["attempt"] < self.settings.max_attempts:
+                if transient(error) and lease["attempt"] - lease.get("attempt_base", 0) < self.settings.max_attempts:
                     self._finish(lease, "retry_scheduled", error_code="DEPENDENCY_TEMPORARY",
                                  retry_seconds=5 if lease["attempt"] == 1 else 15)
                 else:
@@ -232,6 +237,9 @@ class Worker:
         pulse.start()
         try:
             while not self.stop.is_set():
+                activate = getattr(self.repository, "activate_pending", None)
+                if activate:
+                    activate()
                 with self._lock:
                     self.lost.clear()
                     lease = self.repository.claim(self.owner, self.settings.lease_seconds, self.settings.max_attempts)
@@ -270,7 +278,7 @@ def main():
     connect = partial(connect_database, database)
     with connect() as connection:
         run_migrations(connection)
-    repository = InteractionRepository(connect)
+    repository = ControlRepository(connect)
     worker = Worker(repository, partial(production_graph, database, repository))
     for signum in (signal.SIGTERM, signal.SIGINT):
         signal.signal(signum, lambda *_: worker.stop.set())

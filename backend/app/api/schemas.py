@@ -54,6 +54,10 @@ class RunSummary(BaseModel):
     finished_at: datetime | None
     attempt: int = Field(ge=0)
     last_error_code: str | None
+    stop_requested: bool = False
+    invalidated_at: datetime | None = None
+    question: dict[str, Any] | None = None
+    adopted_message_ids: list[str] = Field(default_factory=list)
 
 
 class IncidentStatusResponse(BaseModel):
@@ -93,6 +97,9 @@ class IncidentStatusResponse(BaseModel):
     llm_usage: dict[str, int] = Field(
         default_factory=dict,
     )
+    clarification_exhausted: bool = False
+    clarification_round: int = 0
+    clarification_answers: list[dict[str, Any]] = Field(default_factory=list)
     diagnosis_retry_count: int = Field(
         default=0,
         ge=0,
@@ -173,6 +180,9 @@ class IncidentStatusResponse(BaseModel):
             llm_usage=dict(
                 state.get("llm_usage") or {}
             ),
+            clarification_exhausted=bool(state.get("clarification_exhausted", False)),
+            clarification_round=int(state.get("clarification_round", 0)),
+            clarification_answers=list(state.get("clarification_answers", [])),
             diagnosis_retry_count=int(
                 state.get("diagnosis_retry_count")
                 or 0

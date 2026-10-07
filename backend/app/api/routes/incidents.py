@@ -56,6 +56,11 @@ def _response_from_snapshot(
     response.run = RunSummary.model_validate(snapshot.run) if snapshot.run is not None else None
     response.execution_mode = snapshot.execution_mode
     response.worker_available = snapshot.worker_available
+    if snapshot.run and snapshot.run["status"] == "cancelled":
+        response.phase = "cancelled"
+        response.requires_approval = False
+        response.approved = None
+        response.approval_status = None
     return response
 
 
