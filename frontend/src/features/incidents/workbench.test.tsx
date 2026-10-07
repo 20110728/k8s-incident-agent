@@ -4,6 +4,9 @@ import { ApiClient, ApiClientError } from '../../api'
 import type { IncidentStatusResponse, InteractionResult, Recheck, RunSummary } from '../../api/types'
 import { IncidentWorkbench, InteractionCard, RecheckCard } from './IncidentWorkbench'
 import { commandPermissions, createClientKey, mergeBy, pendingKey, postCommand, readPending, recoverCommand, type PendingCommand } from './workbenchState'
+import App from '../../App'
+import { IncidentAnalysis } from './IncidentAnalysis'
+import { conversationEntries, incidentHref, initialStage, taskLabel, workspaceRoute } from './workspaceNavigation'
 
 const row = (status = 'succeeded', kind = 'diagnosis'): RunSummary => ({ run_id: 'run-1', status, run_kind: kind,
   created_at: '2026-10-07T01:00:00Z', updated_at: '2026-10-07T01:00:10Z', finished_at: null, attempt: 1, last_error_code: null })
@@ -20,6 +23,65 @@ const receipt = { run: row('queued', 'interaction'), output: null, calls: [] }
 const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status })
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
+
+describe('4C separated home and stage workspace', () => {
+  it('keeps the bare URL on home even when a previous event is stored', () => {
+    vi.stubGlobal('location', { search: '', pathname: '/' })
+    vi.stubGlobal('localStorage', { getItem: () => 'previous-incident' })
+    const html = renderToStaticMarkup(<App />)
+    expect(html).toContain('创建并进入事件')
+    expect(html).toContain('历史事件')
+    expect(html).not.toContain('event-conversation')
+    expect(workspaceRoute('')).toEqual({ incidentId: null, invalid: false })
+  })
+  it('opens an event without rendering creation or the history directory', () => {
+    vi.stubGlobal('location', { search: '?incident_id=incident-1', pathname: '/' })
+    const html = renderToStaticMarkup(<App />)
+    expect(html).toContain('正在找回事件')
+    expect(html).not.toContain('创建并进入事件')
+    expect(html).not.toContain('incident-directory')
+  })
+  it('rejects invalid IDs and starts another event without the previous round or stage', () => {
+    expect(workspaceRoute('?incident_id=bad%2Fid').invalid).toBe(true)
+    expect(incidentHref('incident-2')).toBe('?incident_id=incident-2')
+    expect(() => incidentHref('../bad')).toThrow()
+    expect(initialStage('?stage=plan', incident())).toBe('plan')
+    expect(initialStage('?stage=missing', incident())).toBe('overview')
+    expect(initialStage('', { ...incident(), waiting_for_approval: true })).toBe('approval')
+  })
+  it('mounts only the requested analysis section', () => {
+    const html = renderToStaticMarkup(<IncidentAnalysis incident={incident()} section="diagnosis" />)
+    expect(html).toContain('Diagnosis not available')
+    expect(html).not.toContain('No evidence available')
+    expect(html).not.toContain('No Runbooks retrieved')
+    vi.stubGlobal('location', { search: '?stage=evidence&chat=closed', pathname: '/' })
+    const workspace = renderToStaticMarkup(<IncidentWorkbench incident={incident()} onCurrent={() => {}}
+      onApproval={async () => {}} approving={false} approvalError={null} />)
+    expect(workspace).toContain('No evidence available')
+    expect(workspace).not.toContain('Diagnosis not available')
+    expect(workspace).toContain('data-chat="closed"')
+    expect(workspace).toContain('aria-current="page"')
+  })
+  it('does not equate completed work with verified recovery', () => {
+    expect(taskLabel('succeeded', 'remediation_skipped')).toContain('未确认恢复')
+    expect(taskLabel('succeeded', 'verification_succeeded')).toContain('本轮验证通过')
+    expect(taskLabel('waiting_user')).toBe('等待回答')
+  })
+  it('merges replies with task cards without losing unhydrated or older messages', () => {
+    const message = (id: string, role: string, run: string | null, created: string) => ({
+      message_id: id, role, related_run_id: run, created_at: created, sequence: 1,
+      source: 'user_supplied', content: id, evidence_refs: [], adopted_by_run_ids: [],
+    })
+    const messages = [message('older', 'assistant', 'old-run', '2026-10-07T00:00:00Z'),
+      message('question', 'user', 'run-1', '2026-10-07T01:00:00Z'),
+      message('reply', 'assistant', 'run-1', '2026-10-07T01:00:10Z')]
+    const result: InteractionResult = { ...receipt, output: { intent: 'explain', answer: 'answer' } }
+    expect(conversationEntries(messages, [result]).map(e => e.key)).toEqual([
+      'message:older', 'message:question', 'interaction:run-1',
+    ])
+    expect(conversationEntries(messages, []).map(e => e.key)).toContain('message:reply')
+  })
+})
 
 describe('4C request recovery and API contracts', () => {
   it('creates a valid key on HTTP pages without randomUUID', () => {

@@ -1,618 +1,75 @@
-import { IncidentWorkbench } from './features/incidents/IncidentWorkbench'
-import { IncidentDirectory } from './features/incidents/IncidentDirectory'
-import {
-  useEffect,
-  useState,
-} from 'react'
-
-import {
-  apiClient,
-  isApiClientError,
-  type IncidentRequest,
-  type IncidentStatusResponse,
-  type SubmitApprovalRequest,
-} from './api'
-import './App.css'
+import { useEffect, useRef, useState } from 'react'
+import { apiClient, type IncidentRequest, type IncidentStatusResponse, type SubmitApprovalRequest } from './api'
 import { IncidentCreateForm } from './features/incidents/IncidentCreateForm'
+import { IncidentDirectory } from './features/incidents/IncidentDirectory'
+import { IncidentWorkbench } from './features/incidents/IncidentWorkbench'
+import { LAST_INCIDENT_STORAGE_KEY } from './features/incidents/incidentSession'
+import { describeError } from './features/incidents/workbenchState'
+import { incidentHref, workspaceRoute } from './features/incidents/workspaceNavigation'
+import './App.css'
+import './features/incidents/workbench.css'
 
-import {
-  shouldContinueIncidentPolling,
-  startIncidentPolling,
-} from './features/incidents/polling'
+export default function App() {
+  // A bare URL is always the home page. Last-event storage must not hijack it.
+  const [route] = useState(() => workspaceRoute(location.search))
+  const [incident, setIncident] = useState<IncidentStatusResponse | null>(null)
+  const [loading, setLoading] = useState(!!route.incidentId)
+  const [error, setError] = useState('')
+  const [creating, setCreating] = useState(false)
+  const createBusy = useRef(false)
+  const [approving, setApproving] = useState(false)
+  const approveBusy = useRef(false)
+  const [approvalError, setApprovalError] = useState<string | null>(null)
+  const [reload, setReload] = useState(0)
 
-import {
-  buildIncidentSearch,
-  LAST_INCIDENT_STORAGE_KEY,
-  resolveIncidentId,
-} from './features/incidents/incidentSession'
-
-const workflowSteps = [
-  {
-    name: 'Incident intake',
-    description: 'Create and validate the incident request.',
-  },
-  {
-    name: 'Evidence collection',
-    description: 'Collect read-only Kubernetes evidence.',
-  },
-  {
-    name: 'Diagnosis',
-    description: 'Retrieve runbooks and identify the root cause.',
-  },
-  {
-    name: 'Remediation plan',
-    description: 'Generate a constrained remediation proposal.',
-  },
-  {
-    name: 'Human approval',
-    description: 'Approve or reject controlled execution.',
-  },
-  {
-    name: 'Execution & verification',
-    description: 'Execute approved actions and verify recovery.',
-  },
-]
-
-
-type RequestState =
-  | 'idle'
-  | 'creating'
-  | 'succeeded'
-  | 'failed'
-
-type StatusSyncState =
-  | 'idle'
-  | 'polling'
-  | 'failed'
-
-type RestoreState =
-  | 'idle'
-  | 'loading'
-  | 'succeeded'
-  | 'failed'
-
-type ApprovalSubmissionState =
-  | 'idle'
-  | 'submitting'
-  | 'succeeded'
-  | 'failed'
-
-function formatPhase(phase: string) {
-  return phase.replaceAll('_', ' ')
-}
-
-function activeWorkflowStep(
-  phase: string | undefined,
-) {
-  if (!phase) {
-    return 0
-  }
-
-  if (
-    phase.includes('completed') ||
-    phase.includes('verification') ||
-    phase.includes('execut') ||
-    phase.includes('skipped')
-  ) {
-    return 5
-  }
-
-  if (
-    phase.includes('approval') ||
-    phase.includes('rejected')
-  ) {
-    return 4
-  }
-
-  if (
-    phase.includes('remediation') ||
-    phase.includes('planning')
-  ) {
-    return 3
-  }
-
-  if (
-    phase.includes('diagnos') ||
-    phase.includes('runbook') ||
-    phase.includes('retriev')
-  ) {
-    return 2
-  }
-
-  if (
-    phase.includes('evidence') ||
-    phase.includes('collect')
-  ) {
-    return 1
-  }
-
-  return 0
-}
-
-function normalizeError(error: unknown) {
-  if (isApiClientError(error)) {
-    return `[${error.code}] ${error.message}`
-  }
-
-  if (error instanceof Error) {
-    return error.message
-  }
-
-  return '创建事故时发生未知错误。'
-}
-
-function readInitialIncidentId(): string | null {
-  let storedIncidentId: string | null = null
-
-  try {
-    storedIncidentId =
-      globalThis.localStorage.getItem(
-        LAST_INCIDENT_STORAGE_KEY,
-      )
-  } catch {
-    storedIncidentId = null
-  }
-
-  return resolveIncidentId(
-    globalThis.location.search,
-    storedIncidentId,
-  )
-}
-
-function persistIncidentId(
-  incidentId: string,
-) {
-  try {
-    globalThis.localStorage.setItem(
-      LAST_INCIDENT_STORAGE_KEY,
-      incidentId,
-    )
-  } catch {
-    // The URL remains the recovery source when
-    // browser storage is unavailable.
-  }
-
-  const nextSearch = buildIncidentSearch(
-    globalThis.location.search,
-    incidentId,
-  )
-
-  const parameters = new URLSearchParams(nextSearch)
-  if (new URLSearchParams(globalThis.location.search).get('incident_id') !== incidentId) {
-    parameters.delete('run_id')
-  }
-
-  globalThis.history.replaceState(
-    globalThis.history.state,
-    '',
-    `${globalThis.location.pathname}?${parameters}${globalThis.location.hash}`,
-  )
-}
-
-function App() {
-  const [requestState, setRequestState] =
-    useState<RequestState>('idle')
-  const [requestError, setRequestError] =
-    useState<string | null>(null)
-  const [statusSyncState, setStatusSyncState] =
-    useState<StatusSyncState>('idle')
-  const [statusSyncError, setStatusSyncError] =
-    useState<string | null>(null)
-  const [incident, setIncident] =
-    useState<IncidentStatusResponse | null>(null)
-  const [initialIncidentId] =
-    useState(readInitialIncidentId)
-
-  const [restoreState, setRestoreState] =
-    useState<RestoreState>(
-      initialIncidentId ? 'loading' : 'idle',
-    )
-
-  const [restoreError, setRestoreError] =
-    useState<string | null>(null)
-
-  const [
-    approvalSubmissionState,
-    setApprovalSubmissionState,
-  ] = useState<ApprovalSubmissionState>('idle')
-
-  const [
-    approvalSubmissionError,
-    setApprovalSubmissionError,
-  ] = useState<string | null>(null)
-
-  const [
-    statusSyncRevision,
-    setStatusSyncRevision,
-  ] = useState(0)
-
-  async function createIncident(
-    request: IncidentRequest,
-  ) {
-    setRequestState('creating')
-    setRequestError(null)
-    setStatusSyncState('idle')
-    setStatusSyncError(null)
-    setRestoreState('idle')
-    setRestoreError(null)
-    setApprovalSubmissionState('idle')
-    setApprovalSubmissionError(null)
-
-    try {
-      const result =
-        await apiClient.createIncident(request)
-
-      setStatusSyncState('polling')
-      setStatusSyncError(null)
-      persistIncidentId(result.incident_id)
-      setIncident(result)
-      setRequestState('succeeded')
-    } catch (error) {
-      setRequestError(normalizeError(error))
-      setRequestState('failed')
-    }
-  }
-  async function submitApprovalDecision(
-    request: SubmitApprovalRequest,
-  ) {
-    if (!incident) {
-      setApprovalSubmissionState('failed')
-      setApprovalSubmissionError(
-        'No incident is selected.',
-      )
-      return
-    }
-
-    setApprovalSubmissionState('submitting')
-    setApprovalSubmissionError(null)
-
-    try {
-      const result =
-        await apiClient.submitApproval(
-          incident.incident_id,
-          request,
-        )
-
-      persistIncidentId(result.incident_id)
-      setIncident(result)
-      setApprovalSubmissionState('succeeded')
-      setStatusSyncState('polling')
-      setStatusSyncError(null)
-      setStatusSyncRevision(
-        (revision) => revision + 1,
-      )
-    } catch (error) {
-      setApprovalSubmissionState('failed')
-      setApprovalSubmissionError(
-        normalizeError(error),
-      )
-    }
-  }
-
-
-  const incidentId = incident?.incident_id
   useEffect(() => {
-    if (!initialIncidentId) {
-      return
-    }
-
+    if (!route.incidentId) return
     let cancelled = false
+    setLoading(true); setError('')
+    void apiClient.getIncident(route.incidentId).then(value => {
+      if (cancelled) return
+      setIncident(value)
+      try { localStorage.setItem(LAST_INCIDENT_STORAGE_KEY, value.incident_id) } catch { /* URL is sufficient. */ }
+    }).catch(e => { if (!cancelled) setError(describeError(e)) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [route.incidentId, reload])
 
-    void apiClient
-      .getIncident(initialIncidentId)
-      .then((restoredIncident) => {
-        if (cancelled) {
-          return
-        }
+  async function create(request: IncidentRequest) {
+    if (createBusy.current) return
+    createBusy.current = true; setCreating(true); setError('')
+    try {
+      const value = await apiClient.createIncident(request)
+      try { localStorage.setItem(LAST_INCIDENT_STORAGE_KEY, value.incident_id) } catch { /* URL is sufficient. */ }
+      location.assign(incidentHref(value.incident_id))
+    } catch (e) { setError(`创建未完成或结果未确认：${describeError(e)}。请先刷新历史列表检查，避免重复创建。`) }
+    finally { createBusy.current = false; setCreating(false) }
+  }
+  async function approve(request: SubmitApprovalRequest) {
+    if (!incident || approveBusy.current) return
+    approveBusy.current = true; setApproving(true); setApprovalError(null)
+    try { setIncident(await apiClient.submitApproval(incident.incident_id, request)) }
+    catch (e) { setApprovalError(describeError(e)) }
+    finally { approveBusy.current = false; setApproving(false) }
+  }
 
-        persistIncidentId(
-          restoredIncident.incident_id,
-        )
-        setIncident(restoredIncident)
-        setRequestState('succeeded')
-        setRestoreState('succeeded')
-        setRestoreError(null)
-      })
-      .catch((error: unknown) => {
-        if (cancelled) {
-          return
-        }
-
-        setRestoreState('failed')
-        setRestoreError(normalizeError(error))
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [initialIncidentId])
-
-  useEffect(() => {
-    if (!incidentId) {
-      return
-    }
-    if (incident?.execution_mode === 'queued') {
-      setStatusSyncState('idle')
-      return // The workbench keeps polling through questions, approvals and worker outages.
-    }
-    return startIncidentPolling({
-      incidentId,
-      fetchIncident: (currentIncidentId) =>
-        apiClient.getIncident(currentIncidentId),
-
-      onUpdate: (nextIncident) => {
-        setIncident(nextIncident)
-
-        setStatusSyncState(
-          shouldContinueIncidentPolling(nextIncident)
-            ? 'polling'
-            : 'idle',
-        )
-      },
-
-      onError: (error) => {
-        setStatusSyncState('failed')
-        setStatusSyncError(normalizeError(error))
-      },
-    })
-  }, [incidentId, statusSyncRevision, incident?.execution_mode])
-
-  const activeStep = activeWorkflowStep(
-    incident?.phase,
-  )
-
-  const requestStatus =
-    restoreState === 'loading'
-      ? 'Loading incident'
-      : requestState === 'creating'
-        ? 'Requesting'
-        : approvalSubmissionState === 'submitting'
-          ? 'Submitting decision'
-          : requestState === 'failed'
-            || restoreState === 'failed'
-            || statusSyncState === 'failed'
-            || approvalSubmissionState === 'failed'
-            ? 'Error'
-            : statusSyncState === 'polling'
-              ? 'Syncing'
-              : incident
-                ? (incident.execution_mode === 'queued' ? '事件已保存' : 'Connected')
-                : 'Ready'
-
-  return (
-    <div className="app-shell">
-      <header className="topbar">
-        <div className="brand">
-          <div className="brand-mark" aria-hidden="true">
-            K8s
-          </div>
-          <div>
-            <strong>Kubernetes Incident Agent</strong>
-            <small>Evidence-driven incident response</small>
-          </div>
-        </div>
-
-        <div className="environment-badge">
-          Development
-        </div>
-      </header>
-
-      <div className="workspace">
-        <aside className="sidebar">
-          <p className="sidebar-label">Workflow</p>
-
-          <ol className="workflow-list">
-            {workflowSteps.map((step, index) => (
-              <li
-                key={step.name}
-                className={`workflow-step${
-                  index === activeStep ? ' is-active' : ''
-                }`}
-                aria-current={
-                  index === activeStep ? 'step' : undefined
-                }
-              >
-                <span className="step-number">
-                  {index + 1}
-                </span>
-                <div>
-                  <strong>{step.name}</strong>
-                  <p>{step.description}</p>
-                </div>
-              </li>
-            ))}
-          </ol>
-        </aside>
-
-        <main className="main-content">
-          <div className="page-heading">
-            <div>
-              <p className="eyebrow">
-                Incident workspace
-              </p>
-              <h1>Investigate Kubernetes incidents</h1>
-              <p className="page-description">
-                Create an incident to collect evidence,
-                retrieve runbooks and start a structured
-                diagnosis.
-              </p>
-            </div>
-
-            <div
-              className="request-indicator"
-              data-state={requestState}
-              aria-live="polite"
-            >
-              <span />
-              {requestStatus}
-            </div>
-          </div>
-
-          <section className="metric-grid">
-            <article className="metric-card">
-              <span>Current incident</span>
-              <strong>
-                {incident ? 'Created' : 'None'}
-              </strong>
-            </article>
-
-            <article className="metric-card">
-              <span>Current phase</span>
-              <strong>
-                {incident
-                  ? formatPhase(incident.phase)
-                  : 'Not started'}
-              </strong>
-            </article>
-
-            <article className="metric-card">
-              <span>Human approval</span>
-              <strong>
-                {incident?.waiting_for_approval
-                  ? 'Required'
-                  : 'Not waiting'}
-              </strong>
-            </article>
-          </section>
-
-          {requestError && (
-            <div className="api-error" role="alert">
-              <strong>Incident creation failed</strong>
-              <span>{requestError}</span>
-            </div>
-          )}
-
-          {statusSyncError && (
-            <div className="api-error" role="alert">
-              <strong>Status refresh failed</strong>
-              <span>{statusSyncError}</span>
-            </div>
-          )}
-
-          {restoreError && (
-            <div className="api-error" role="alert">
-              <strong>Incident restore failed</strong>
-              <span>{restoreError}</span>
-            </div>
-          )}
-
-          <IncidentDirectory />
-          <div className="incident-layout">
-            <IncidentCreateForm
-              submitting={requestState === 'creating'}
-              onSubmit={createIncident}
-            />
-
-            <section className="content-panel incident-details">
-              <div className="panel-header">
-                <div>
-                  <p className="eyebrow">
-                    Current response
-                  </p>
-                  <h2>Incident summary</h2>
-                </div>
-              </div>
-
-              {incident ? (
-                <>
-                  <dl className="incident-summary">
-                    <div>
-                      <dt>Incident ID</dt>
-                      <dd>
-                        <code className="incident-id">
-                          {incident.incident_id}
-                        </code>
-                      </dd>
-                    </div>
-
-                    <div>
-                      <dt>Namespace</dt>
-                      <dd>
-                        {incident.request['namespace']}
-                      </dd>
-                    </div>
-
-                    <div>
-                      <dt>Service</dt>
-                      <dd>
-                        {
-                          incident.request[
-                            'service_name'
-                          ]
-                        }
-                      </dd>
-                    </div>
-
-                    <div>
-                      <dt>Phase</dt>
-                      <dd>
-                        {formatPhase(incident.phase)}
-                      </dd>
-                    </div>
-
-                    {incident.run && (
-                      <div>
-                        <dt>Task status</dt>
-                        <dd>{incident.run.status}</dd>
-                        {incident.run.last_error_code && (
-                          <dd>{incident.run.last_error_code}</dd>
-                        )}
-                      </div>
-                    )}
-
-                    <div>
-                      <dt>Waiting for approval</dt>
-                      <dd>
-                        {incident.waiting_for_approval
-                          ? 'Yes'
-                          : 'No'}
-                      </dd>
-                    </div>
-
-                    <div>
-                      <dt>Fault category</dt>
-                      <dd>
-                        {incident.diagnosis
-                          ?.fault_category ?? 'Pending'}
-                      </dd>
-                    </div>
-                  </dl>
-
-                  <p className="incident-note">
-                    {incident.run?.status === 'reconciling'
-                      ? '写入结果需要人工核对。系统已停止自动写入，请勿通过重复提交事件尝试补写。'
-                      : incident.run?.status === 'waiting_approval'
-                      ? '诊断和方案已保存。提交审批后，由 worker 执行并记录操作结果。'
-                      : incident.run && incident.worker_available === false
-                      ? '任务已保存，当前没有在线 worker。可凭事件 ID 找回任务。'
-                      : '事件响应已保存，可查看下方诊断证据和处置结果。'}
-                  </p>
-                </>
-              ) : (
-                <div className="empty-state">
-                  <div
-                    className="empty-state-icon"
-                    aria-hidden="true"
-                  >
-                    01
-                  </div>
-                  <h3>No incident selected</h3>
-                  <p>
-                    Submit the form to create an incident
-                    and display the initial graph state.
-                  </p>
-                </div>
-              )}
-            </section>
-          </div>
-          {incident && <IncidentWorkbench key={incident.incident_id} incident={incident} onCurrent={setIncident}
-            approving={approvalSubmissionState === 'submitting'} approvalError={approvalSubmissionError}
-            onApproval={submitApprovalDecision} />}
-
-        </main>
-      </div>
-    </div>
-  )
+  return <div className="app-shell workspace-app">
+    <header className="topbar">
+      <a className="brand" href={location.pathname || '/'}><span className="brand-mark">K8s</span>
+        <span><strong>Kubernetes Incident Agent</strong><small>事件调查与处置</small></span></a>
+      <span className="environment-badge">{route.incidentId ? '事件工作台' : '事件首页'}</span>
+    </header>
+    {!route.incidentId ? <main className="home-page">
+      <div className="page-heading"><div><h1>事件中心</h1><p>创建一个新事件，或继续处理历史事件。</p></div></div>
+      {route.invalid && <p className="api-error" role="alert">事件链接无效，请从列表打开或输入正确的事件 ID。</p>}
+      {error && <p className="api-error" role="alert">{error}</p>}
+      <div className="home-columns"><IncidentCreateForm submitting={creating} onSubmit={create} /><IncidentDirectory /></div>
+    </main> : <main className="event-page">
+      {loading && <p className="content-panel" role="status">正在找回事件……</p>}
+      {error && <section className="content-panel" role="alert"><p>{error}</p>
+        <button onClick={() => setReload(x => x + 1)}>重新读取</button> <a href={location.pathname || '/'}>返回事件列表</a></section>}
+      {incident && !loading && <IncidentWorkbench key={incident.incident_id} incident={incident} onCurrent={setIncident}
+        onApproval={approve} approving={approving} approvalError={approvalError} />}
+    </main>}
+  </div>
 }
-
-export default App

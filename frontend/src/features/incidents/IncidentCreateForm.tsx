@@ -57,8 +57,7 @@ export function IncidentCreateForm({
     <section className="content-panel incident-form-panel">
       <div className="panel-header">
         <div>
-          <p className="eyebrow">Incident intake</p>
-          <h2>Create incident</h2>
+          <h2>创建事件</h2>
         </div>
       </div>
 
@@ -108,7 +107,7 @@ export function IncidentCreateForm({
         </label>
 
         <label className="form-field">
-          <span>Incident description</span>
+          <span>发生了什么？</span>
           <textarea
             name="description"
             value={description}
@@ -138,12 +137,12 @@ export function IncidentCreateForm({
             disabled={submitting}
           >
             {submitting
-              ? 'Creating incident…'
-              : 'Create incident'}
+              ? '正在创建……'
+              : '创建并进入事件 →'}
           </button>
 
           <span className="form-help">
-            创建操作可能需要等待证据采集、检索和诊断完成。
+            一个事件绑定一个目标服务；创建后进入专属工作台。
           </span>
         </div>
       </form>

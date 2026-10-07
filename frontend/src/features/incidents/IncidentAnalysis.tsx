@@ -462,10 +462,12 @@ function RunbookPanel({
 
 interface IncidentAnalysisProps {
   incident: IncidentStatusResponse
+  section?: 'all' | 'diagnosis' | 'evidence' | 'plan'
 }
 
 export function IncidentAnalysis({
   incident,
+  section = 'all',
 }: IncidentAnalysisProps) {
   const availableEvidenceIds = new Set(
     incident.evidence.map(
@@ -490,7 +492,7 @@ export function IncidentAnalysis({
 
   return (
     <div className="analysis-stack">
-      <DiagnosisPanel
+      {(section === 'all' || section === 'diagnosis') && <DiagnosisPanel
         diagnosis={incident.diagnosis}
         llmModel={incident.llm_model}
         availableEvidenceIds={
@@ -499,9 +501,9 @@ export function IncidentAnalysis({
         availableRunbookIds={
           availableRunbookIds
         }
-      />
+      />}
 
-      <EvidencePanel
+      {(section === 'all' || section === 'evidence') && <><EvidencePanel
         evidence={incident.evidence}
         referencedIds={diagnosisEvidenceIds}
       />
@@ -511,7 +513,8 @@ export function IncidentAnalysis({
         referencedIds={diagnosisRunbookIds}
         retrievalQuery={incident.retrieval_query}
       />
-      <RemediationPlanPanel incident={incident} />
+      </>}
+      {(section === 'all' || section === 'plan') && <RemediationPlanPanel incident={incident} />}
     </div>
   )
 }
