@@ -1,0 +1,16 @@
+.incident-workbench { display: grid; gap: 20px; min-width: 0; }
+.incident-workbench .content-panel { min-width: 0; }
+.workbench-actions { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; margin: 12px 0; }
+.incident-workbench label { display: grid; gap: 8px; margin: 12px 0; }
+.incident-workbench textarea { min-height: 90px; width: 100%; box-sizing: border-box; }
+.incident-workbench select { max-width: 100%; padding: 10px; }
+.incident-workbench button, .workbench-actions button { padding: 9px 14px; cursor: pointer; }
+.incident-workbench button:disabled { cursor: not-allowed; opacity: .5; }
+.workbench-list { padding-left: 22px; }
+.workbench-list li, .workbench-record { border-bottom: 1px solid #dbe3ec; padding: 12px 0; overflow-wrap: anywhere; }
+.workbench-list small { display: block; }
+.workbench-warning, .question-card { padding: 16px; border: 1px solid #d2ad61; background: #fff8e7; border-radius: 8px; color: #463719; }
+.preserve-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.incident-workbench pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 400px; overflow: auto; }
+.approval-fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.incident-workbench details > summary { cursor: pointer; padding: 8px 0; }

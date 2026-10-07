@@ -258,16 +258,7 @@ export interface IncidentError {
 export interface IncidentStatusResponse {
   execution_mode?: 'sync' | 'queued'
   worker_available?: boolean
-  run?: {
-    run_id: string
-    status: string
-    run_kind: string
-    created_at: string
-    updated_at: string
-    finished_at: string | null
-    attempt: number
-    last_error_code: string | null
-  } | null
+  run?: RunSummary | null
   llm_debug?: JsonObject
   incident_id: string
   thread_id: string
@@ -326,4 +317,110 @@ export interface HealthResponse {
 export interface ReadinessResponse {
   status: 'ready'
   checks: Record<string, boolean>
+}
+
+export interface Question {
+  question_id: string
+  version: number
+  questions: { slot: string; text: string }[]
+  reason: string
+  evidence_revision: string
+}
+
+export interface RunSummary {
+  run_id: string
+  status: string
+  run_kind: string
+  created_at: string
+  updated_at: string
+  finished_at: string | null
+  attempt: number
+  last_error_code: string | null
+  stop_requested?: boolean
+  invalidated_at?: string | null
+  question?: Question | null
+  adopted_message_ids?: string[]
+}
+
+export interface IncidentListItem {
+  incident_id: string
+  namespace: string
+  service_name: string
+  phase: string
+  created_at: string
+  updated_at: string
+  run: RunSummary | null
+}
+
+export interface CursorPage<T> { items: T[]; next_cursor: string | null }
+export interface SequencePage<T> { items: T[]; next_before_sequence: number | null }
+export interface Message {
+  message_id: string
+  sequence: number
+  role: string
+  source: string
+  content: string
+  created_at: string
+  related_run_id: string | null
+  evidence_refs: string[]
+  adopted_by_run_ids: string[]
+}
+export type InteractionIntent = 'auto' | 'explain' | 'compare' | 'supplement' | 'investigate' | 'recheck' | 'stop'
+export interface InteractionRequest {
+  client_message_id: string
+  content: string
+  intent: InteractionIntent
+  reference_run_id?: string
+  compare_run_id?: string
+}
+export interface AnswerRequest {
+  client_message_id: string
+  content: string
+  question_id: string
+  version: number
+  answers: Record<string, string>
+  skip: boolean
+}
+export interface InteractionResult {
+  run: RunSummary
+  output: {
+    intent?: string
+    answer?: string
+    reason?: string
+    unknowns?: string[]
+    diagnosis_run_id?: string
+    historical_only?: boolean
+    reference_snapshots?: { run_id: string | null; snapshot_at: string }[]
+    citations?: { citation_id: string; run_id: string | null; collected_at: string | null; snapshot_at: string }[]
+  } | null
+  calls: { purpose?: string; model?: string; elapsed_ms?: number; status?: string; usage?: Record<string, number> }[]
+}
+export interface ControlReceipt {
+  control_id: string
+  status: string
+  action?: string
+  message_id: string
+  diagnosis_run_id?: string
+  deferred_until_write_checked?: boolean
+  processing?: string
+}
+export type CommandReceipt = InteractionResult | ControlReceipt
+export interface Recheck {
+  recheck_id: string
+  started_at: string
+  finished_at: string
+  note: string
+  status: string
+  resource_status: string
+  business_status: string
+  target_comparison: { status: string; changes: JsonObject }
+  unverified_scope: string[]
+  error_code: string | null
+  collection_errors: JsonObject[]
+}
+export interface Operation {
+  operation_id: string
+  run_id: string
+  state: string
+  error_code: string | null
 }

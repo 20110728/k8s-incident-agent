@@ -280,7 +280,7 @@ LangGraph 负责图状态、节点路由、检查点、等待用户/审批以及
 
 **4A：持久化消息和轮次（分两次验收）。**
 
-4A-1、4A-2、4B-1 维护者已反馈 ECS 验收通过，queued 后端与应用 worker 已启用。4B-2 已开发待 ECS 验收，见 `docs/acceptance/4B-2-controls.md`；4C 页面尚未开发。
+4A-1、4A-2、4B-1、4B-2 维护者已反馈 ECS 验收通过，queued 后端与应用 worker 已启用。4C 页面已开发待 ECS 及浏览器验收，见 `docs/acceptance/4C-workbench.md`；阶段 5 未开始。
 
 - 4A-1 新增消息仓储、迁移及 `POST/GET /api/v1/incidents/{id}/messages`，复用已有 runs 查询能力；确切 schema 在实施时冻结。
 - client_message_id 按事件唯一，同键同内容复用、不同内容 409；消息 sequence 由数据库生成。模型回复使用稳定去重标识，重放不重复追加；刷新不产生新调用。

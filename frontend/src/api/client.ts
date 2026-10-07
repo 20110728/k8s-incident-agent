@@ -7,6 +7,8 @@ import type {
   IncidentStatusResponse,
   ReadinessResponse,
   SubmitApprovalRequest,
+  CursorPage, SequencePage, IncidentListItem, RunSummary, Message,
+  InteractionRequest, AnswerRequest, CommandReceipt, InteractionResult, Recheck, Operation,
 } from './types'
 
 export type FetchLike = (
@@ -106,6 +108,17 @@ function isAbortError(error: unknown): boolean {
     && error.name === 'AbortError'
   )
 }
+
+function isPage<T>(value: unknown): value is CursorPage<T> & SequencePage<T> {
+  return isRecord(value) && Array.isArray(value.items)
+}
+
+function isReceipt(value: unknown): value is CommandReceipt {
+  return isRecord(value) && (typeof value.control_id === 'string'
+    || (isRecord(value.run) && typeof value.run.run_id === 'string'))
+}
+
+const incidentPath = (id: string) => `/api/v1/incidents/${encodeURIComponent(id)}`
 
 export class ApiClient {
   private readonly baseUrl: string
@@ -255,6 +268,39 @@ export class ApiClient {
       },
       isHealthResponse,
     )
+  }
+
+  listIncidents(cursor?: string): Promise<CursorPage<IncidentListItem>> {
+    return this.request(`/api/v1/incidents?limit=20${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, { method: 'GET' }, isPage<IncidentListItem>)
+  }
+  listRuns(id: string, cursor?: string): Promise<CursorPage<RunSummary>> {
+    return this.request(`${incidentPath(id)}/runs?limit=20${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, { method: 'GET' }, isPage<RunSummary>)
+  }
+  getRound(id: string, run: string): Promise<{ result: IncidentStatusResponse }> {
+    return this.request(`${incidentPath(id)}/runs/${encodeURIComponent(run)}`, { method: 'GET' },
+      (v): v is { result: IncidentStatusResponse } => isRecord(v) && isIncidentStatusResponse(v.result))
+  }
+  listMessages(id: string, before?: number): Promise<SequencePage<Message>> {
+    return this.request(`${incidentPath(id)}/messages?limit=20${before ? `&before_sequence=${before}` : ''}`, { method: 'GET' }, isPage<Message>)
+  }
+  listRechecks(id: string, before?: number): Promise<SequencePage<Recheck>> {
+    return this.request(`${incidentPath(id)}/rechecks?limit=20${before ? `&before_sequence=${before}` : ''}`, { method: 'GET' }, isPage<Recheck>)
+  }
+  listOperations(id: string): Promise<{ items: Operation[] }> {
+    return this.request(`${incidentPath(id)}/operations`, { method: 'GET' }, isPage<Operation>)
+  }
+  interact(id: string, body: InteractionRequest): Promise<CommandReceipt> {
+    return this.request(`${incidentPath(id)}/interactions`, { method: 'POST', body: JSON.stringify(body) }, isReceipt)
+  }
+  answer(id: string, run: string, body: AnswerRequest): Promise<CommandReceipt> {
+    return this.request(`${incidentPath(id)}/runs/${encodeURIComponent(run)}/answers`, { method: 'POST', body: JSON.stringify(body) }, isReceipt)
+  }
+  findCommand(id: string, key: string, answer = false): Promise<CommandReceipt> {
+    return this.request(`${incidentPath(id)}/${answer ? 'controls' : 'interactions'}?client_message_id=${encodeURIComponent(key)}`, { method: 'GET' }, isReceipt)
+  }
+  getInteraction(id: string, run: string): Promise<InteractionResult> {
+    return this.request(`${incidentPath(id)}/interactions/${encodeURIComponent(run)}`, { method: 'GET' },
+      (v): v is InteractionResult => isReceipt(v) && 'run' in v)
   }
 
   getReadiness(): Promise<ReadinessResponse> {

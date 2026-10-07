@@ -7,7 +7,6 @@ import type {
 
 import {
   evidenceElementId,
-  formatConfidence,
   formatLabel,
   formatTimestamp,
   formatVectorDistance,
@@ -63,16 +62,6 @@ function DiagnosisPanel({
               </strong>
             </div>
 
-            <div>
-              <span className="field-label">
-                Confidence
-              </span>
-              <strong className="confidence-value">
-                {formatConfidence(
-                  diagnosis.confidence,
-                )}
-              </strong>
-            </div>
           </div>
 
           <div className="diagnosis-section">

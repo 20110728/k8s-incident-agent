@@ -1,4 +1,5 @@
-import { IncidentDebugPanel } from './features/incidents/IncidentDebugPanel'
+import { IncidentWorkbench } from './features/incidents/IncidentWorkbench'
+import { IncidentDirectory } from './features/incidents/IncidentDirectory'
 import {
   useEffect,
   useState,
@@ -20,22 +21,10 @@ import {
 } from './features/incidents/polling'
 
 import {
-  IncidentAnalysis,
-} from './features/incidents/IncidentAnalysis'
-
-import {
   buildIncidentSearch,
   LAST_INCIDENT_STORAGE_KEY,
   resolveIncidentId,
 } from './features/incidents/incidentSession'
-
-import {
-  ApprovalDecisionPanel,
-} from './features/incidents/ApprovalDecisionPanel'
-
-import {
-  IncidentOutcomePanel,
-} from './features/incidents/IncidentOutcomePanel'
 
 const workflowSteps = [
   {
@@ -188,10 +177,15 @@ function persistIncidentId(
     incidentId,
   )
 
+  const parameters = new URLSearchParams(nextSearch)
+  if (new URLSearchParams(globalThis.location.search).get('incident_id') !== incidentId) {
+    parameters.delete('run_id')
+  }
+
   globalThis.history.replaceState(
     globalThis.history.state,
     '',
-    `${globalThis.location.pathname}${nextSearch}${globalThis.location.hash}`,
+    `${globalThis.location.pathname}?${parameters}${globalThis.location.hash}`,
   )
 }
 
@@ -337,8 +331,10 @@ function App() {
     if (!incidentId) {
       return
     }
-
-
+    if (incident?.execution_mode === 'queued') {
+      setStatusSyncState('idle')
+      return // The workbench keeps polling through questions, approvals and worker outages.
+    }
     return startIncidentPolling({
       incidentId,
       fetchIncident: (currentIncidentId) =>
@@ -359,7 +355,7 @@ function App() {
         setStatusSyncError(normalizeError(error))
       },
     })
-  }, [incidentId, statusSyncRevision])
+  }, [incidentId, statusSyncRevision, incident?.execution_mode])
 
   const activeStep = activeWorkflowStep(
     incident?.phase,
@@ -380,7 +376,7 @@ function App() {
             : statusSyncState === 'polling'
               ? 'Syncing'
               : incident
-                ? 'Connected'
+                ? (incident.execution_mode === 'queued' ? '事件已保存' : 'Connected')
                 : 'Ready'
 
   return (
@@ -500,6 +496,7 @@ function App() {
             </div>
           )}
 
+          <IncidentDirectory />
           <div className="incident-layout">
             <IncidentCreateForm
               submitting={requestState === 'creating'}
@@ -608,28 +605,9 @@ function App() {
               )}
             </section>
           </div>
-          {incident && (
-            <>
-              <IncidentDebugPanel incident={incident} />
-              <IncidentAnalysis incident={incident} />
-            </>
-          )}
-
-          {incident && (
-            <ApprovalDecisionPanel
-              incident={incident}
-              submitting={
-                approvalSubmissionState ===
-                'submitting'
-              }
-              error={approvalSubmissionError}
-              onSubmit={submitApprovalDecision}
-            />
-          )}
-
-          {incident && (
-            <IncidentOutcomePanel incident={incident} />
-          )}
+          {incident && <IncidentWorkbench key={incident.incident_id} incident={incident} onCurrent={setIncident}
+            approving={approvalSubmissionState === 'submitting'} approvalError={approvalSubmissionError}
+            onApproval={submitApprovalDecision} />}
 
         </main>
       </div>

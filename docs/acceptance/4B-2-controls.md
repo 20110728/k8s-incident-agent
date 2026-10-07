@@ -1,4 +1,4 @@
-# 4B-2：追问、停止与输入仲裁（待 ECS 验收）
+# 4B-2：追问、停止与输入仲裁（维护者已反馈验收、迁移及重启通过）
 
 新 queued 事件及新轮使用 `incident-dialogue-v1`；旧 `incident-v1`、`incident-round-v1` 保留原恢复路径，sync 不变。unknown 诊断的 missing_evidence 若涉及开始时间、近期变更、具体报错或影响范围，按固定规则最多问 2 个、最多 2 轮，不重复问同一类；采集工具应提供的证据不转问用户。问题经 LangGraph interrupt 保存，等待释放 worker，无额外模型调用。回复恢复原 run/thread，重新采样后再诊断（即使不足 5 分钟）；跳过保持 unknown，不据此规划修复。
 
