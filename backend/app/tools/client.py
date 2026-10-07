@@ -19,7 +19,7 @@ class KubernetesClients:
 
 def create_clients(
     context: str | None = None,
-    *, disable_retries: bool = False,
+    *, disable_retries: bool = False, bounded_reads: bool = False,
 ) -> KubernetesClients:
     """Create Kubernetes API clients.
 
@@ -32,12 +32,14 @@ def create_clients(
         selected_context = context or os.getenv("KUBERNETES_CONTEXT") or DEFAULT_CONTEXT
         config.load_kube_config(context=selected_context)
 
-    if disable_retries:
+    if disable_retries or bounded_reads:
         configuration = k8s_client.Configuration.get_default_copy()
         configuration.retries = 0
         api = k8s_client.ApiClient(configuration=configuration)
-        return KubernetesClients(core=k8s_client.CoreV1Api(api), apps=k8s_client.AppsV1Api(api),
-                                 discovery=k8s_client.DiscoveryV1Api(api))
+        from backend.app.tools.deadline import BoundedApi
+        wrap = BoundedApi if bounded_reads else lambda value: value
+        return KubernetesClients(core=wrap(k8s_client.CoreV1Api(api)), apps=wrap(k8s_client.AppsV1Api(api)),
+                                 discovery=wrap(k8s_client.DiscoveryV1Api(api)))
     return KubernetesClients(
         core=k8s_client.CoreV1Api(),
         apps=k8s_client.AppsV1Api(),

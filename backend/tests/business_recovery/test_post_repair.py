@@ -158,5 +158,9 @@ def test_legacy_success_does_not_claim_business(setup):
 
 def test_production_factory_wraps_resource_verifier(monkeypatch):
     from backend.app.agent import dependencies
-    monkeypatch.setattr(dependencies,'create_clients',lambda:Mock())
-    assert isinstance(dependencies.build_recovery_verifier(),BusinessRecoveryVerifier)
+    from backend.app.agent.stability import WindowRecoveryVerifier
+    monkeypatch.setattr(dependencies,'create_clients',lambda **kwargs:Mock())
+    verifier = dependencies.build_recovery_verifier()
+    assert isinstance(verifier, WindowRecoveryVerifier)
+    assert isinstance(verifier.single, BusinessRecoveryVerifier)
+    assert verifier.single.resource_verifier._timeout_seconds == 0

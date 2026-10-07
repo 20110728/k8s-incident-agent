@@ -225,6 +225,7 @@ export interface RecoveryVerificationResult {
   resource_verification_status?: VerificationStatus | null
   resource_status?: 'ready' | 'not_ready' | 'unknown'
   business_status?: 'passed' | 'failed' | 'unknown' | 'skipped'
+  observation?: ObservationSummary | null
   unverified_scope?: string[]
   post_repair_evidence?: EvidenceItem[]
 
@@ -365,7 +366,7 @@ export interface Message {
   evidence_refs: string[]
   adopted_by_run_ids: string[]
 }
-export type InteractionIntent = 'auto' | 'explain' | 'compare' | 'supplement' | 'investigate' | 'recheck' | 'stop'
+export type InteractionIntent = 'auto' | 'explain' | 'compare' | 'supplement' | 'investigate' | 'recheck' | 'observe' | 'stop'
 export interface InteractionRequest {
   client_message_id: string
   content: string
@@ -405,7 +406,15 @@ export interface ControlReceipt {
   processing?: string
 }
 export type CommandReceipt = InteractionResult | ControlReceipt
+export interface ObservationSummary {
+  status: string
+  consecutive: number
+  policy: { version: string; required_consecutive: number }
+  samples: { sequence: number; status: string; resource_status?: string; business_status?: string; started_at: string; finished_at: string | null }[]
+}
+
 export interface Recheck {
+  observation?: ObservationSummary | null
   recheck_id: string
   started_at: string
   finished_at: string

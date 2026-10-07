@@ -5,6 +5,7 @@ import { ApprovalDecisionPanel } from './ApprovalDecisionPanel'
 import { IncidentAnalysis } from './IncidentAnalysis'
 import { IncidentDebugPanel } from './IncidentDebugPanel'
 import { IncidentOutcomePanel } from './IncidentOutcomePanel'
+import { ObservationPanel } from './ObservationPanel'
 import { WORKSPACE_STAGES, conversationEntries, initialStage, taskLabel, type WorkspaceStage } from './workspaceNavigation'
 import { evidenceElementId } from './presentation'
 import { commandPermissions, createClientKey, defaultContent, definiteRejection, describeError, isMissing, mergeBy, pendingKey, postCommand, readPending, recoverCommand, type PendingCommand } from './workbenchState'
@@ -13,7 +14,7 @@ import './workbench.css'
 const api = new ApiClient({ timeoutMs: 15_000 })
 const time = (value?: string | null) => value ? new Date(value).toLocaleString() : '时间未记录'
 const commandNames: Record<InteractionIntent, string> = { auto: '发送消息', explain: '解释依据', compare: '比较两轮',
-  supplement: '仅补充信息', investigate: '继续调查', recheck: '重新检查', stop: '停止调查' }
+  supplement: '仅补充信息', investigate: '继续调查', recheck: '重新检查', observe: '观察稳定性', stop: '停止调查' }
 
 function QuestionForm({ question, disabled, submit }: {
   question: Question; disabled: boolean; submit: (answers: Record<string, string>, skip: boolean) => void
@@ -61,6 +62,7 @@ export function RecheckCard({ item }: { item: Recheck }) {
     <h4>独立复查 · {item.status}</h4>
     <p>采样开始 {time(item.started_at)}；完成 {time(item.finished_at)}</p>
     <p>资源：{item.resource_status}；登记业务：{item.business_status}</p>
+    <ObservationPanel observation={item.observation} />
     <p>目标对比：{item.target_comparison.status}。本次观察不覆盖原结论，也不能证明此前修复导致了恢复。</p>
     <p className="preserve-text">人工处理说明（未核实）：{item.note || '无'}</p>
     <p>未验证范围：{item.unverified_scope.join('；') || '未提供范围说明'}</p>
@@ -450,7 +452,8 @@ export function IncidentWorkbench({ incident, onCurrent, onApproval, approving, 
           {pending && <div className="workbench-warning" role="status">有请求尚未确认：{pending.body.client_message_id}。刷新不会重发。
             <div className="workbench-actions"><button disabled={busy} onClick={() => void lookup()}>查询结果</button><button disabled={busy} onClick={() => void execute(null, true)}>查询后原编号重试</button></div></div>}
           {notice && <p role="status">{notice}</p>}
-          <div className="workbench-actions">{(['explain', 'investigate', 'recheck', 'stop'] as InteractionIntent[]).map(intent => <button key={intent}
+          <small>重新检查：单次采样。观察稳定性：限时连续采样，无模型调用；完成后在“执行与复查”查看。</small>
+          <div className="workbench-actions">{(['explain', 'investigate', 'recheck', 'observe', 'stop'] as InteractionIntent[]).map(intent => <button key={intent}
             disabled={locked || !permissions[intent] || (!selectedCurrent && intent !== 'explain')} onClick={() => send(intent)}>{commandNames[intent]}</button>)}</div>
           <form onSubmit={e => { e.preventDefault(); send(selectedCurrent ? 'auto' : 'explain') }}>
             <label>消息或人工处理说明<textarea value={content} maxLength={2000} disabled={locked}

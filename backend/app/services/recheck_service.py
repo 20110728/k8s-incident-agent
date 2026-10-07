@@ -49,6 +49,7 @@ class RecheckResult(BaseModel):
     error_code: str | None = None
     cluster_writes_executed: Literal[False] = False
     model_called: Literal[False] = False
+    observation: dict[str, Any] | None = None
 
 
 class RecheckUnavailable(ValueError):

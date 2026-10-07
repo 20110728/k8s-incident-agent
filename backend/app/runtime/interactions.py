@@ -78,14 +78,14 @@ def execute_interaction(repo, lease, lost, *, model_factory=InteractionModel, co
         output["answer"] = "聊天不能批准修复，请查看并使用当前方案的审批卡片。"
     elif intent == "clarify":
         output["answer"] = "请选择解释、补充信息、继续调查或重新检查。若要更换服务，请新建事件。"
-    elif intent == "recheck":
+    elif intent in {"recheck", "observe"}:
         result = repo.saved_recheck(lease)
         if result is None:
             if lease.get("recovery_only"):
                 raise ValueError("INTERACTION_ATTEMPTS_EXHAUSTED")
             if collector_factory is None:
                 from backend.app.agent.dependencies import build_kubernetes_collector
-                collector_factory = build_kubernetes_collector
+                collector_factory = lambda: build_kubernetes_collector(bounded_reads=intent == "observe")
             owned()
             collector = collector_factory()
             def collect(*args):
@@ -94,7 +94,11 @@ def execute_interaction(repo, lease, lost, *, model_factory=InteractionModel, co
             frozen = SimpleNamespace(state=references[0]["state"], waiting_for_approval=False)
             service = IncidentRecheckService(SimpleNamespace(get_incident=lambda _: frozen),
                 SimpleNamespace(collect=collect), SimpleNamespace(append=lambda value: repo.save_recheck(lease, value)))
-            service.create(lease["incident_id"], RecheckRequest(note=payload["content"][:2000]))
+            if intent == "observe":
+                from backend.app.agent.stability import observe_recheck
+                observe_recheck(repo, lease, SimpleNamespace(collect=collect), references[0]["state"], payload["content"][:2000])
+            else:
+                service.create(lease["incident_id"], RecheckRequest(note=payload["content"][:2000]))
             result = repo.saved_recheck(lease)
         output.update(recheck=result, fresh_observation=True, note_source="user_supplied_unverified")
     elif intent == "investigate":

@@ -81,6 +81,7 @@ export function commandPermissions(incident: IncidentStatusResponse, runs: RunSu
     supplement: enabled && canAddFacts,
     investigate: enabled && canAddFacts,
     recheck: enabled && !active && !interactionBusy && !unresolved && recheckPhase && incident.approval_status !== 'pending',
+    observe: enabled && !active && !interactionBusy && !unresolved && recheckPhase && incident.approval_status !== 'pending',
     stop: enabled && (active || interactionBusy || pendingInvestigation),
     answer: enabled && run?.status === 'waiting_user' && !run.stop_requested && !!run.question,
   }
@@ -88,5 +89,5 @@ export function commandPermissions(incident: IncidentStatusResponse, runs: RunSu
 
 export function defaultContent(intent: InteractionIntent) {
   return { auto: '', explain: '请解释这一轮的诊断依据与尚未验证的内容。', compare: '请对比这两个轮次的证据与结论。',
-    supplement: '', investigate: '请继续调查，结合已保存的信息重新采集证据。', recheck: '请重新检查当前资源与登记业务，不执行修复。', stop: '先别查了' }[intent]
+    supplement: '', investigate: '请继续调查，结合已保存的信息重新采集证据。', recheck: '请重新检查当前资源与登记业务，不执行修复。', observe: '请连续观察当前资源与登记业务的稳定性，不执行修复。', stop: '先别查了' }[intent]
 }

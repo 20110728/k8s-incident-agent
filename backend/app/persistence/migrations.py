@@ -288,6 +288,20 @@ MIGRATIONS += (
 )
 
 
+MIGRATIONS += (
+    Migration(11, "observation_windows", (
+        """CREATE TABLE incident_agent_app.observation_windows (
+            observation_key TEXT PRIMARY KEY,
+            incident_id TEXT NOT NULL REFERENCES incident_agent_app.incidents(incident_id),
+            run_id TEXT REFERENCES incident_agent_app.runs(run_id),
+            owner_token TEXT NOT NULL, payload JSONB NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp())""",
+        "CREATE INDEX observations_incident_idx ON incident_agent_app.observation_windows(incident_id,created_at)",
+    )),
+)
+
+
 def run_migrations(
     connection: MigrationConnectionPort,
 ) -> list[int]:

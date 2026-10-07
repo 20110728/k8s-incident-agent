@@ -6,6 +6,7 @@ import { IncidentWorkbench, InteractionCard, RecheckCard } from './IncidentWorkb
 import { commandPermissions, createClientKey, mergeBy, pendingKey, postCommand, readPending, recoverCommand, type PendingCommand } from './workbenchState'
 import App from '../../App'
 import { IncidentAnalysis } from './IncidentAnalysis'
+import { ObservationPanel } from './ObservationPanel'
 import { conversationEntries, incidentHref, initialStage, taskLabel, workspaceRoute } from './workspaceNavigation'
 
 const row = (status = 'succeeded', kind = 'diagnosis'): RunSummary => ({ run_id: 'run-1', status, run_kind: kind,
@@ -25,6 +26,24 @@ const response = (value: unknown, status = 200) => new Response(JSON.stringify(v
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
 describe('4C separated home and stage workspace', () => {
+  it('offers stable observation only when single recheck is permitted', () => {
+    for (const status of ['succeeded', 'running', 'waiting_approval', 'waiting_user']) {
+      const permissions = commandPermissions(incident(status), [], [])
+      expect(permissions.observe).toBe(permissions.recheck)
+    }
+    expect(commandPermissions(incident(), [], []).observe).toBe(true)
+    expect(commandPermissions(incident(), [row('running', 'interaction')], []).observe).toBe(false)
+  })
+  it('shows failed window separately from a passing last sample and preserves legacy results', () => {
+    const html = renderToStaticMarkup(<ObservationPanel observation={{ status: 'invalidated', consecutive: 0,
+      policy: { version: 'recovery-window-v1', required_consecutive: 3 }, samples: [
+        { sequence: 1, status: 'passed', resource_status: 'ready', business_status: 'passed', started_at: 'start', finished_at: 'finish' },
+      ] }} />)
+    expect(html).toContain('目标变化，观察失效')
+    expect(html).toContain('不代表所有副本')
+    expect(html).not.toContain('连续观察通过')
+    expect(renderToStaticMarkup(<ObservationPanel />)).toBe('')
+  })
   it('keeps the bare URL on home even when a previous event is stored', () => {
     vi.stubGlobal('location', { search: '', pathname: '/' })
     vi.stubGlobal('localStorage', { getItem: () => 'previous-incident' })

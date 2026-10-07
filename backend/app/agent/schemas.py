@@ -401,6 +401,7 @@ class VerificationCheck(BaseModel):
 
 class RecoveryVerificationResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    observation: dict[str, Any] | None = None
 
     # 旧检查点缺少这些字段时保持 resource_only，不追认业务恢复。
     verification_scope: Literal['resource_only', 'resources_and_registered_business'] = 'resource_only'

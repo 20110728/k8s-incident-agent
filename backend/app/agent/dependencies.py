@@ -38,8 +38,8 @@ from backend.app.agent.verification import (
     KubernetesRecoveryVerifier,
 )
 
-def build_kubernetes_collector() -> KubernetesCollectorAdapter:
-    clients = create_clients()
+def build_kubernetes_collector(*, bounded_reads=False) -> KubernetesCollectorAdapter:
+    clients = create_clients(bounded_reads=bounded_reads)
 
     def collect_fn(
         namespace: str,
@@ -101,10 +101,11 @@ def build_remediation_executor() -> (
     )
 
 
-def build_recovery_verifier():
+def build_recovery_verifier(*, repository=None, lease=None):
     from backend.app.agent.business_recovery import BusinessRecoveryVerifier
+    from backend.app.agent.stability import WindowRecoveryVerifier
 
-    return BusinessRecoveryVerifier(
-        resource_verifier=KubernetesRecoveryVerifier(clients=create_clients()),
-        collector=build_kubernetes_collector(),
-    )
+    return WindowRecoveryVerifier(BusinessRecoveryVerifier(
+        resource_verifier=KubernetesRecoveryVerifier(clients=create_clients(bounded_reads=True), timeout_seconds=0),
+        collector=build_kubernetes_collector(bounded_reads=True),
+    ), repository=repository, lease=lease)

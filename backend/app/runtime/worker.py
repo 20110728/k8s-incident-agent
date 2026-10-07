@@ -68,7 +68,7 @@ def production_graph(settings, repository, lease, lost):
             diagnoser=owned(build_diagnosis_service()),
             planner=owned(build_remediation_planner()),
             executor=owned(LedgerExecutor(create_clients(disable_retries=True), repository, lease, lost)),
-            verifier=owned(build_recovery_verifier()),
+            verifier=owned(build_recovery_verifier(repository=repository, lease=lease)),
             checkpointer=saver,
             dialogue=lease["workflow_version"] == DIALOGUE_WORKFLOW,
         )

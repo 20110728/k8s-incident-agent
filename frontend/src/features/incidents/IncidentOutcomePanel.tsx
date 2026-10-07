@@ -1,6 +1,7 @@
 import type {
   IncidentStatusResponse,
 } from '../../api'
+import { ObservationPanel } from './ObservationPanel'
 import {
   formatJsonValue,
   formatLabel,
@@ -374,6 +375,7 @@ export function IncidentOutcomePanel({
                 )}
                 <p>Unverified: {(verificationResult.unverified_scope ?? ['Business recovery']).join('; ')}</p>
                 <p>{verificationResult.message}</p>
+                <ObservationPanel observation={verificationResult.observation} />
               </div>
 
               {verificationResult.error_message && (
