@@ -3,7 +3,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from backend.app.agent.schemas import Diagnosis
+from pydantic import ValidationError
+
+from backend.app.agent.schemas import CurrentDiagnosis, Diagnosis
 from backend.app.llm.context_builder import (
     build_diagnosis_context,
 )
@@ -42,14 +44,25 @@ def diagnosis_state() -> dict:
     }
 
 
-def valid_diagnosis() -> Diagnosis:
-    return Diagnosis(
-        fault_category="readiness_probe_error",
-        root_cause="Readiness Probe路径错误",
+def valid_diagnosis() -> CurrentDiagnosis:
+    return CurrentDiagnosis(
+        fault_category="unknown",
+        root_cause="Pod未Ready，当前证据不足以确认原因。",
         evidence_ids=["ev-test-001"],
         runbook_ids=["wrong-http-path"],
         confidence=0.9,
         reasoning_summary="Pod未Ready。",
+        assessment={
+            "schema_version": "v2",
+            "problem_domain": "insufficient_evidence",
+            "symptoms": [{"summary": "Pod未Ready", "evidence_ids": ["ev-test-001"]}],
+            "root_cause_hypotheses": [],
+            "missing_evidence": ["实际探针配置和当前失败事件"],
+            "next_investigation": ["核对探针配置和相关事件"],
+            "resource_status": "not_ready",
+            "business_status": "unknown",
+            "unverified_scope": ["业务接口未验证"],
+        },
     )
 
 
@@ -98,7 +111,8 @@ class FakeChatModel:
         return self.structured
 
 
-def test_chat_diagnoser_returns_parsed_result():
+@pytest.mark.parametrize("as_dict", [False, True])
+def test_chat_diagnoser_returns_parsed_result(as_dict):
     raw = SimpleNamespace(
         usage_metadata={
             "input_tokens": 100,
@@ -109,7 +123,7 @@ def test_chat_diagnoser_returns_parsed_result():
 
     model = FakeChatModel(
         {
-            "parsed": valid_diagnosis(),
+            "parsed": valid_diagnosis().model_dump() if as_dict else valid_diagnosis(),
             "parsing_error": None,
             "raw": raw,
         }
@@ -127,9 +141,20 @@ def test_chat_diagnoser_returns_parsed_result():
     assert result.diagnosis == valid_diagnosis()
     assert result.model_name == "fake-model"
     assert result.usage["total_tokens"] == 125
-    assert model.schema is Diagnosis
+    assert model.schema is CurrentDiagnosis
     assert model.options["strict"] is True
     assert model.options["include_raw"] is True
+
+
+@pytest.mark.parametrize("as_dict", [False, True])
+def test_new_model_output_requires_assessment_while_legacy_diagnosis_remains_readable(as_dict):
+    payload = valid_diagnosis().model_dump(exclude={"assessment"})
+    legacy = Diagnosis.model_validate(payload)
+    assert legacy.assessment is None
+    model = FakeChatModel({"parsed": payload if as_dict else legacy, "parsing_error": None, "raw": None})
+    service = ChatDiagnosisService(model=model, model_name="fake-model")
+    with pytest.raises(ValidationError):
+        service.diagnose(diagnosis_state())
 
 
 def test_chat_diagnoser_rejects_parsing_error():

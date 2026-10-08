@@ -23,7 +23,8 @@ def main():
         run_migrations(connection)
     report = Path(audit) / "junit.xml"
     targets = ["backend/tests/investigation", "backend/tests/persistence/test_migrations.py",
-        "backend/tests/interactions", "backend/tests/delayed", "backend/tests/dialogue",
+        # Live-model checks have their own opt-in wrapper, outside deterministic 6A.
+        "backend/tests/interactions/test_interactions.py", "backend/tests/delayed", "backend/tests/dialogue",
         "backend/tests/llm", "backend/tests/rag", "backend/tests/observations",
         "backend/tests/runtime/test_operation_protocol.py", "backend/tests/runtime/test_operations_postgres.py"]
     result = subprocess.call([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
