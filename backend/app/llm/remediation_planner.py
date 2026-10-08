@@ -1,3 +1,4 @@
+from backend.app.runtime.budget import invoke_model
 from backend.app.llm.debug_capture import record_response
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -59,7 +60,7 @@ class ChatRemediationPlanner:
             state
         )
 
-        response = self._structured_model.invoke(
+        response = invoke_model(self._structured_model,
             [
                 SystemMessage(
                     content=(
@@ -73,7 +74,7 @@ class ChatRemediationPlanner:
                         )
                     )
                 ),
-            ]
+            ], RemediationPlan
         )
 
         record_response(response)

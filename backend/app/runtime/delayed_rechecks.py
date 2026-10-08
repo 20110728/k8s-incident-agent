@@ -1,6 +1,7 @@
 """One bounded read-only follow-up; terminal publication never launches repair."""
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from contextlib import nullcontext
 
 from backend.app.agent.observation import identity
 from backend.app.persistence.delayed_rechecks import WORKFLOW, stale, terminal
@@ -8,6 +9,7 @@ from backend.app.persistence.leases import LeaseLost
 from backend.app.persistence.runs import request_digest
 from backend.app.services.recheck_service import IncidentRecheckService, RecheckRequest
 from backend.app.tools.deadline import read_budget
+from backend.app.runtime.budget import CURRENT
 
 
 def target_changed(expected, observed):
@@ -66,7 +68,8 @@ def execute_delayed_recheck(repo, lease, lost, *, collector_factory=None, comple
             service = IncidentRecheckService(SimpleNamespace(get_incident=lambda _: frozen),
                 SimpleNamespace(collect=collect), SimpleNamespace(append=lambda _: None))
             remaining = min(30, max(0, (row["expires_at"] - datetime.now(UTC)).total_seconds()))
-            with read_budget(remaining):
+            budget = CURRENT.get()
+            with budget.stage("delayed_recheck", remaining) if budget else nullcontext(), read_budget(remaining):
                 observed = service.create(lease["incident_id"], RecheckRequest(note="稳定性窗口通过后的延时只读复查")).model_dump(mode="json")
             owned()
             target = identity(observed["service_profile"], observed["evidence"])

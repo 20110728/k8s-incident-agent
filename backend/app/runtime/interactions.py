@@ -3,12 +3,14 @@ from datetime import UTC, datetime
 from time import monotonic
 from types import SimpleNamespace
 from uuid import uuid4
+from contextlib import nullcontext
 
 from backend.app.llm.interaction import InteractionModel, validate_answer
 from backend.app.persistence.leases import LeaseLost
 from backend.app.persistence.runs import request_digest
 from backend.app.services.interaction_schemas import INTERACTION_WORKFLOW, IntentDecision, Explanation
 from backend.app.services.recheck_service import IncidentRecheckService, RecheckRequest
+from backend.app.runtime.budget import CURRENT
 
 
 def execute_interaction(repo, lease, lost, *, model_factory=InteractionModel, collector_factory=None, complete=None):
@@ -38,7 +40,9 @@ def execute_interaction(repo, lease, lost, *, model_factory=InteractionModel, co
         repo.save_progress(lease, progress)  # Crash leaves an explicit unknown-cost call.
         started = monotonic()
         try:
-            parsed, usage = model.call(purpose, payload["content"], references)
+            budget = CURRENT.get()
+            with budget.stage("interaction_model", 60) if budget else nullcontext():
+                parsed, usage = model.call(purpose, payload["content"], references)
             record["usage"] = usage or None
             schema = IntentDecision if purpose == "route" else Explanation
             parsed = schema.model_validate(parsed).model_dump()
@@ -85,7 +89,7 @@ def execute_interaction(repo, lease, lost, *, model_factory=InteractionModel, co
                 raise ValueError("INTERACTION_ATTEMPTS_EXHAUSTED")
             if collector_factory is None:
                 from backend.app.agent.dependencies import build_kubernetes_collector
-                collector_factory = lambda: build_kubernetes_collector(bounded_reads=intent == "observe")
+                collector_factory = lambda: build_kubernetes_collector(bounded_reads=True)
             owned()
             collector = collector_factory()
             def collect(*args):
@@ -94,11 +98,13 @@ def execute_interaction(repo, lease, lost, *, model_factory=InteractionModel, co
             frozen = SimpleNamespace(state=references[0]["state"], waiting_for_approval=False)
             service = IncidentRecheckService(SimpleNamespace(get_incident=lambda _: frozen),
                 SimpleNamespace(collect=collect), SimpleNamespace(append=lambda value: repo.save_recheck(lease, value)))
-            if intent == "observe":
-                from backend.app.agent.stability import observe_recheck
-                observe_recheck(repo, lease, SimpleNamespace(collect=collect), references[0]["state"], payload["content"][:2000])
-            else:
-                service.create(lease["incident_id"], RecheckRequest(note=payload["content"][:2000]))
+            budget = CURRENT.get()
+            with budget.stage(intent, 120 if intent == "observe" else 45) if budget else nullcontext():
+                if intent == "observe":
+                    from backend.app.agent.stability import observe_recheck
+                    observe_recheck(repo, lease, SimpleNamespace(collect=collect), references[0]["state"], payload["content"][:2000])
+                else:
+                    service.create(lease["incident_id"], RecheckRequest(note=payload["content"][:2000]))
             result = repo.saved_recheck(lease)
         output.update(recheck=result, fresh_observation=True, note_source="user_supplied_unverified")
     elif intent == "investigate":

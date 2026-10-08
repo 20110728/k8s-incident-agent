@@ -127,6 +127,10 @@ class LedgerExecutor:
                 (auth.plan.parameters.resource_kind == "Deployment" and before["resource_version"] != live["resource_version"]) or
                 before["configuration"] != prior_configuration(auth.plan)):
             return self._result(auth, operation, "conflict", code="OPERATION_PRECONDITION_FAILED")
+        from backend.app.runtime.budget import CURRENT
+        budget = CURRENT.get()
+        if budget:
+            budget.before_write(required=120)
         self.repository.dispatch(self.lease, operation["operation_id"])
         hit("before_patch", self.lease, operation["operation_id"])
         self._assert_owned()

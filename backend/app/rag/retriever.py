@@ -29,13 +29,18 @@ class PGVectorRunbookRetriever:
                 "retrieval query must not be blank"
             )
 
-        results = (
-            self._vector_store
-            .similarity_search_with_score(
-                query=query,
-                k=k,
-            )
-        )
+        from backend.app.runtime.budget import CURRENT
+        budget = CURRENT.get()
+        estimate = len(query.encode("utf-8")) + 512
+        if budget and estimate > 12000:
+            budget.deny("EMBEDDING_INPUT_LIMIT")
+        ticket = budget.reserve("embedding", tokens=estimate,
+            metadata={"estimate_source": "utf8_bytes_plus_512", "usage_unavailable": True}) if budget else None
+        try:
+            results = self._vector_store.similarity_search_with_score(query=query, k=k)
+        finally:
+            if budget:
+                budget.settle(ticket, 0, status="usage_unavailable")
 
         return [
             {

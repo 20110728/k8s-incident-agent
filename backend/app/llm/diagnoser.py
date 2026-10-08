@@ -1,3 +1,4 @@
+from backend.app.runtime.budget import invoke_model
 from backend.app.llm.debug_capture import record_response
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -55,7 +56,7 @@ class ChatDiagnosisService:
     ) -> DiagnosisCallResult:
         context = build_diagnosis_context(state)
 
-        response = self._structured_model.invoke(
+        response = invoke_model(self._structured_model,
             [
                 SystemMessage(
                     content=DIAGNOSIS_SYSTEM_PROMPT
@@ -67,7 +68,7 @@ class ChatDiagnosisService:
                         )
                     )
                 ),
-            ]
+            ], CurrentDiagnosis
         )
 
         record_response(response)

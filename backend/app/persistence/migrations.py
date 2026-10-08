@@ -322,6 +322,14 @@ MIGRATIONS += (
 )
 
 
+MIGRATIONS += (
+    Migration(13, "run_budgets", (
+        """CREATE TABLE incident_agent_app.run_budgets (
+            run_id TEXT PRIMARY KEY REFERENCES incident_agent_app.runs(run_id), payload JSONB NOT NULL)""",
+    )),
+)
+
+
 def run_migrations(
     connection: MigrationConnectionPort,
 ) -> list[int]:

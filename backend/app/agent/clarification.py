@@ -2,6 +2,7 @@
 import re
 import json
 from hashlib import sha256
+from datetime import UTC, datetime
 
 from langgraph.types import interrupt
 
@@ -24,6 +25,15 @@ def prepare_clarification(state):
     if state.get("phase") != "diagnosis_completed" or diagnosis.get("fault_category") != "unknown" or not slots or count >= 2:
         return {"question": None, "clarification_exhausted": count >= 2 and diagnosis.get("fault_category") == "unknown"}
     version = count + 1
+    from backend.app.runtime.budget import CURRENT, BudgetExceeded
+    budget = CURRENT.get()
+    if budget:
+        try:
+            budget.decision(f"question:{version}")
+        except BudgetExceeded:
+            return {"question": None, "clarification_exhausted": True,
+                      "trace": [{"step": "budget", "status": "failed", "timestamp": datetime.now(UTC).isoformat(),
+                                 "message": "追问预算已用完；保留未知结论并交接人工。"}]}
     question = {"question_id": "q-" + sha256(f'{state["run_id"]}:{version}'.encode()).hexdigest()[:24],
                 "version": version, "questions": slots[:2], "reason": "诊断缺少只能由人工补充的信息；回答仍需采集证据核实。",
                 "evidence_revision": sha256(json.dumps(state.get("evidence", []), sort_keys=True, default=str).encode()).hexdigest(),

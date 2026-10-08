@@ -23,6 +23,12 @@ def get_interaction_repository():
     return InteractionRepository(partial(connect_database, get_database_settings()))
 
 
+@router.get("/{incident_id}/runs/{run_id}/budget")
+def read_budget(incident_id: IncidentId, run_id: IncidentId, repo=Depends(get_interaction_repository)):
+    from backend.app.runtime.budget import budget_view
+    return budget_view(repo, incident_id, run_id)
+
+
 @router.get("/{incident_id}/interaction-status")
 def status(incident_id: IncidentId, repo=Depends(get_interaction_repository)):
     return repo.status(incident_id)

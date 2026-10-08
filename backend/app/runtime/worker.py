@@ -4,6 +4,7 @@ import signal
 import threading
 import time
 from contextlib import contextmanager
+from contextlib import nullcontext
 from functools import partial
 from uuid import uuid4
 
@@ -29,6 +30,7 @@ from backend.app.runtime.telemetry import report
 from backend.app.runtime.failpoints import get_failpoints, hit
 from backend.app.services.round_context import ROUND_WORKFLOWS, DIALOGUE_WORKFLOW
 from backend.app.persistence.operations import json_value
+from backend.app.runtime.budget import CURRENT, RunBudget, bind_budget
 
 
 class OwnedDependency:
@@ -45,7 +47,16 @@ class OwnedDependency:
             started = time.monotonic()
             report("dependency_started", self.lease, node=name, input_value=[args, kwargs])
             try:
-                result = method(*args, **kwargs)
+                budget = CURRENT.get()
+                saved_write = self.repository.operation(self.lease["run_id"]) if budget and name == "execute" else None
+                if budget and name == "execute" and not saved_write:
+                    budget.before_write()
+                seconds = {"collect": 45, "retrieve": 30, "diagnose": 60, "plan": 60, "execute": 30, "verify": 120}.get(name, 30)
+                # Cached/uncertain writes must still be projected/reconciled even
+                # when the run has exhausted its ordinary activity budget.
+                cached = saved_write and saved_write["state"] != "prepared"
+                with budget.stage(name, seconds) if budget and not cached else nullcontext():
+                    result = method(*args, **kwargs)
             except Exception as error:
                 report("dependency_failed", self.lease, node=name,
                        error_class="transient" if transient(error) else "permanent",
@@ -59,15 +70,15 @@ class OwnedDependency:
 
 @contextmanager
 def production_graph(settings, repository, lease, lost):
-    with fenced_checkpointer(settings, repository, lease, lost) as saver:
+    with fenced_checkpointer(settings, repository, lease, lost) as saver, bind_budget(RunBudget(repository, lease)):
         def owned(dependency):
             return OwnedDependency(dependency, repository, lease, lost)
         yield build_incident_graph(
-            collector=owned(build_kubernetes_collector()),
+            collector=owned(build_kubernetes_collector(bounded_reads=True)),
             retriever=owned(build_runbook_retriever()),
             diagnoser=owned(build_diagnosis_service()),
             planner=owned(build_remediation_planner()),
-            executor=owned(LedgerExecutor(create_clients(disable_retries=True), repository, lease, lost)),
+            executor=owned(LedgerExecutor(create_clients(disable_retries=True, bounded_reads=True), repository, lease, lost)),
             verifier=owned(build_recovery_verifier(repository=repository, lease=lease)),
             checkpointer=saver,
             dialogue=lease["workflow_version"] == DIALOGUE_WORKFLOW,
@@ -169,14 +180,21 @@ class Worker:
         try:
             if lease.get("run_kind") == "interaction":
                 from backend.app.persistence.delayed_rechecks import WORKFLOW as DELAYED_WORKFLOW
-                if lease["workflow_version"] == DELAYED_WORKFLOW:
-                    from backend.app.runtime.delayed_rechecks import execute_delayed_recheck
-                    execute_delayed_recheck(self.repository, lease, self.lost, complete=self._complete_interaction)
-                    report("succeeded", lease)
-                    return
                 from backend.app.runtime.interactions import execute_interaction
-                (self.interaction_handler or execute_interaction)(
-                    self.repository, lease, self.lost, complete=self._complete_interaction)
+                from backend.app.runtime.delayed_rechecks import execute_delayed_recheck
+                handler = execute_delayed_recheck if lease["workflow_version"] == DELAYED_WORKFLOW else (self.interaction_handler or execute_interaction)
+                publication = []
+                def complete(saved_lease, output, **kwargs):
+                    publication.append((saved_lease, output, kwargs))
+                # Only new dependency work spends budget; cached terminal results
+                # must remain publishable after a crash or budget exhaustion.
+                with bind_budget(RunBudget(self.repository, lease)) as budget:
+                    with budget.activity():
+                        handler(self.repository, lease, self.lost, complete=complete)
+                if len(publication) != 1:
+                    raise ValueError("INTERACTION_PUBLICATION_MISSING")
+                saved_lease, output, kwargs = publication[0]
+                self._complete_interaction(saved_lease, output, **kwargs)
                 report("succeeded", lease)
                 return
             # Recover external effects even if graph/checkpoint/LLM setup fails.
@@ -212,7 +230,9 @@ class Worker:
                 if decision.action == "start" and lease["workflow_version"] in ROUND_WORKFLOWS:
                     input_value["round_context"] = lease["context_snapshot"]
                     input_value["run_id"] = lease["run_id"]
-                graph.invoke(input_value, config=config)
+                budget = CURRENT.get()
+                with budget.activity() if budget else nullcontext():
+                    graph.invoke(input_value, config=config)
                 reading_checkpoint = True
                 self._project(lease, graph.get_state(config))
         except LeaseLost:

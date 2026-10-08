@@ -4,6 +4,7 @@ import type { CommandReceipt, DelayedRecheck, IncidentStatusResponse, Interactio
 import { ApprovalDecisionPanel } from './ApprovalDecisionPanel'
 import { IncidentAnalysis } from './IncidentAnalysis'
 import { IncidentDebugPanel } from './IncidentDebugPanel'
+import { RunBudgetPanel } from './RunBudgetPanel'
 import { IncidentOutcomePanel } from './IncidentOutcomePanel'
 import { ObservationPanel } from './ObservationPanel'
 import { DelayedRecheckPanel } from './DelayedRecheckPanel'
@@ -433,6 +434,7 @@ export function IncidentWorkbench({ incident, onCurrent, onApproval, approving, 
           {stage === 'debug' && <><section className="content-panel"><h3>本轮调用用量（未计价）</h3>
             <p>诊断：{Object.keys(shown.llm_usage).length ? JSON.stringify(shown.llm_usage) : '未记录'}</p>
             <p>方案：{Object.keys(shown.remediation_llm_usage).length ? JSON.stringify(shown.remediation_llm_usage) : '未记录'}</p></section>
+            <RunBudgetPanel key={shown.run?.run_id ?? 'legacy'} incidentId={id} runId={shown.run?.run_id} />
             <IncidentDebugPanel incident={shown} /></>}
         </>}
         <footer className="stage-pagination"><button disabled={stageIndex === 0} onClick={() => chooseStage(WORKSPACE_STAGES[stageIndex - 1].id)}>← 上一环节</button>

@@ -445,3 +445,12 @@ export interface Operation {
   state: string
   error_code: string | null
 }
+export interface RunBudget {
+  available: boolean
+  run_id: string
+  policy?: { active_seconds: number; extra_seconds: number; total_tokens: number; decisions: number; tools: number }
+  used?: { active_seconds: number; extra_seconds: number; tokens: number; decisions: number; tools: number }
+  exhausted?: string | null
+  calls?: unknown[]
+  handoff?: { reason: string; known: string; unknown: string; next_step: string } | null
+}

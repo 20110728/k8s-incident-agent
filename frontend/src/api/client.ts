@@ -8,7 +8,7 @@ import type {
   ReadinessResponse,
   SubmitApprovalRequest,
   CursorPage, SequencePage, IncidentListItem, RunSummary, Message,
-  InteractionRequest, AnswerRequest, CommandReceipt, InteractionResult, Recheck, Operation, DelayedRecheck,
+  InteractionRequest, AnswerRequest, CommandReceipt, InteractionResult, Recheck, Operation, DelayedRecheck, RunBudget,
 } from './types'
 
 export type FetchLike = (
@@ -279,6 +279,17 @@ export class ApiClient {
   getRound(id: string, run: string): Promise<{ result: IncidentStatusResponse }> {
     return this.request(`${incidentPath(id)}/runs/${encodeURIComponent(run)}`, { method: 'GET' },
       (v): v is { result: IncidentStatusResponse } => isRecord(v) && isIncidentStatusResponse(v.result))
+  }
+  getRunBudget(id: string, run: string): Promise<RunBudget> {
+    return this.request(`${incidentPath(id)}/runs/${encodeURIComponent(run)}/budget`, { method: 'GET' },
+      (v): v is RunBudget => {
+        if (!isRecord(v) || typeof v.available !== 'boolean' || typeof v.run_id !== 'string') return false
+        if (!v.available) return true
+        const used = v.used, policy = v.policy
+        return isRecord(used) && isRecord(policy)
+          && ['active_seconds', 'extra_seconds', 'tokens', 'decisions', 'tools'].every(k => typeof used[k] === 'number')
+          && ['active_seconds', 'extra_seconds', 'total_tokens', 'decisions', 'tools'].every(k => typeof policy[k] === 'number')
+      })
   }
   listMessages(id: string, before?: number): Promise<SequencePage<Message>> {
     return this.request(`${incidentPath(id)}/messages?limit=20${before ? `&before_sequence=${before}` : ''}`, { method: 'GET' }, isPage<Message>)

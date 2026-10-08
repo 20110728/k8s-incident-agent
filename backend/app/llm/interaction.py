@@ -66,8 +66,9 @@ class InteractionModel:
                   "target": {key: target.get(key) for key in ("namespace", "service_name")}}
         if purpose != "route":
             prompt["snapshots"] = explanation_material(references)[0]
-        result = self.model.with_structured_output(schema, method="json_schema", strict=True, include_raw=True).invoke([
-            ("system", instruction), ("human", json.dumps(prompt, ensure_ascii=False))])
+        from backend.app.runtime.budget import invoke_model
+        result = invoke_model(self.model.with_structured_output(schema, method="json_schema", strict=True, include_raw=True), [
+            ("system", instruction), ("human", json.dumps(prompt, ensure_ascii=False))], schema)
         if result.get("parsing_error") or result.get("parsed") is None:
             raise ValueError("INVALID_INTERACTION_MODEL_OUTPUT")
         usage = getattr(result.get("raw"), "usage_metadata", None) or {}
