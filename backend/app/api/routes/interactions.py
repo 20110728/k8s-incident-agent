@@ -28,6 +28,13 @@ def status(incident_id: IncidentId, repo=Depends(get_interaction_repository)):
     return repo.status(incident_id)
 
 
+@router.get("/{incident_id}/delayed-rechecks")
+def delayed_history(incident_id: IncidentId, limit: int = Query(default=20, ge=1, le=50),
+                    before_sequence: int | None = Query(default=None, ge=1), repo=Depends(get_interaction_repository)):
+    from backend.app.persistence.delayed_rechecks import history
+    return history(repo, incident_id, limit, before_sequence)
+
+
 @router.get("/{incident_id}/interactions")
 def find(incident_id: IncidentId, client_message_id: str = Query(min_length=1, max_length=128), repo=Depends(get_interaction_repository)):
     row = repo.by_interaction_key(incident_id, client_message_id)

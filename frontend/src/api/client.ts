@@ -8,7 +8,7 @@ import type {
   ReadinessResponse,
   SubmitApprovalRequest,
   CursorPage, SequencePage, IncidentListItem, RunSummary, Message,
-  InteractionRequest, AnswerRequest, CommandReceipt, InteractionResult, Recheck, Operation,
+  InteractionRequest, AnswerRequest, CommandReceipt, InteractionResult, Recheck, Operation, DelayedRecheck,
 } from './types'
 
 export type FetchLike = (
@@ -285,6 +285,9 @@ export class ApiClient {
   }
   listRechecks(id: string, before?: number): Promise<SequencePage<Recheck>> {
     return this.request(`${incidentPath(id)}/rechecks?limit=20${before ? `&before_sequence=${before}` : ''}`, { method: 'GET' }, isPage<Recheck>)
+  }
+  listDelayedRechecks(id: string, before?: number): Promise<SequencePage<DelayedRecheck>> {
+    return this.request(`${incidentPath(id)}/delayed-rechecks?limit=20${before ? `&before_sequence=${before}` : ''}`, { method: 'GET' }, isPage<DelayedRecheck>)
   }
   listOperations(id: string): Promise<{ items: Operation[] }> {
     return this.request(`${incidentPath(id)}/operations`, { method: 'GET' }, isPage<Operation>)

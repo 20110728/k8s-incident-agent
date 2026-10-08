@@ -302,6 +302,26 @@ MIGRATIONS += (
 )
 
 
+MIGRATIONS += (
+    Migration(12, "delayed_rechecks", (
+        """CREATE TABLE incident_agent_app.delayed_rechecks (
+            sequence BIGSERIAL PRIMARY KEY, delayed_id TEXT NOT NULL UNIQUE,
+            observation_key TEXT NOT NULL REFERENCES incident_agent_app.observation_windows(observation_key),
+            policy_version TEXT NOT NULL, incident_id TEXT NOT NULL REFERENCES incident_agent_app.incidents(incident_id),
+            source_run_id TEXT REFERENCES incident_agent_app.runs(run_id),
+            basis_run_id TEXT, event_revision BIGINT NOT NULL, target JSONB NOT NULL,
+            snapshot JSONB NOT NULL, initial_result JSONB NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','running','passed','relapsed','unknown','invalidated','expired')),
+            due_at TIMESTAMPTZ NOT NULL, expires_at TIMESTAMPTZ NOT NULL, next_attempt_at TIMESTAMPTZ NOT NULL,
+            run_id TEXT UNIQUE REFERENCES incident_agent_app.runs(run_id), result JSONB, reason TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(), finished_at TIMESTAMPTZ,
+            UNIQUE(observation_key,policy_version))""",
+        "CREATE INDEX delayed_rechecks_due_idx ON incident_agent_app.delayed_rechecks(next_attempt_at) WHERE status IN ('pending','running')",
+        "CREATE INDEX delayed_rechecks_history_idx ON incident_agent_app.delayed_rechecks(incident_id,sequence DESC)",
+    )),
+)
+
+
 def run_migrations(
     connection: MigrationConnectionPort,
 ) -> list[int]:

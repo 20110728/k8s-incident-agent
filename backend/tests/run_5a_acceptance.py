@@ -11,11 +11,11 @@ from backend.app.persistence.settings import DatabaseSettings, get_database_sett
 from backend.tests.run_1a_acceptance import isolated_database_url
 
 
-def main():
+def main(stage="5a"):
     database = os.environ.get("INCIDENT_AGENT_TEST_DATABASE_NAME", "")
     audit = os.environ.get("INCIDENT_AGENT_TEST_AUDIT_DIR")
-    if not database.startswith("incident_agent_test_5a_") or not audit:
-        raise ValueError("Use bash scripts/accept_stage5a.sh")
+    if stage not in {"5a", "5b"} or not database.startswith(f"incident_agent_test_{stage}_") or not audit:
+        raise ValueError(f"Use bash scripts/accept_stage{stage}.sh")
     environment = dict(os.environ)
     url = isolated_database_url(get_database_settings().database_url.get_secret_value(), database)
     environment["INCIDENT_AGENT_TEST_DATABASE_URL"] = url
@@ -25,7 +25,7 @@ def main():
     result = subprocess.call([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
         "backend/tests/observations", "backend/tests/business_recovery", "backend/tests/agent/test_verification.py",
         "backend/tests/persistence/test_migrations.py", "backend/tests/interactions/test_interactions.py",
-        "--junitxml=" + str(report)], env=environment)
+        "--junitxml=" + str(report)] + (["backend/tests/delayed"] if stage == "5b" else []), env=environment)
     if result:
         return result
     cases = list(ET.parse(report).iter("testcase"))

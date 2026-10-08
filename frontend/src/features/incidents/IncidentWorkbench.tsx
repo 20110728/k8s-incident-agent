@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { ApiClient } from '../../api'
-import type { CommandReceipt, IncidentStatusResponse, InteractionIntent, InteractionResult, Message, Operation, Question, Recheck, RunSummary, SubmitApprovalRequest } from '../../api/types'
+import type { CommandReceipt, DelayedRecheck, IncidentStatusResponse, InteractionIntent, InteractionResult, Message, Operation, Question, Recheck, RunSummary, SubmitApprovalRequest } from '../../api/types'
 import { ApprovalDecisionPanel } from './ApprovalDecisionPanel'
 import { IncidentAnalysis } from './IncidentAnalysis'
 import { IncidentDebugPanel } from './IncidentDebugPanel'
 import { IncidentOutcomePanel } from './IncidentOutcomePanel'
 import { ObservationPanel } from './ObservationPanel'
+import { DelayedRecheckPanel } from './DelayedRecheckPanel'
 import { WORKSPACE_STAGES, conversationEntries, initialStage, taskLabel, type WorkspaceStage } from './workspaceNavigation'
 import { evidenceElementId } from './presentation'
 import { commandPermissions, createClientKey, defaultContent, definiteRejection, describeError, isMissing, mergeBy, pendingKey, postCommand, readPending, recoverCommand, type PendingCommand } from './workbenchState'
@@ -86,6 +87,8 @@ export function IncidentWorkbench({ incident, onCurrent, onApproval, approving, 
   const [runs, setRuns] = useState<RunSummary[]>([])
   const [messages, setMessages] = useState<Message[]>([])
   const [rechecks, setRechecks] = useState<Recheck[]>([])
+  const [delayedRechecks, setDelayedRechecks] = useState<DelayedRecheck[]>([])
+  const [delayedCursor, setDelayedCursor] = useState<number | null | undefined>(undefined)
   const [operations, setOperations] = useState<Operation[]>([])
   const [interactions, setInteractions] = useState<InteractionResult[]>([])
   const interactionCache = useRef(new Map<string, InteractionResult>())
@@ -170,12 +173,16 @@ export function IncidentWorkbench({ incident, onCurrent, onApproval, approving, 
     async function poll() {
       try {
         if (!queuedMode) {
-          const current = await api.getIncident(id)
-          if (!cancelled) { onCurrent(current); setFresh(true); setError('') }
+          const [current, delayedPage] = await Promise.all([api.getIncident(id), api.listDelayedRechecks(id)])
+          if (!cancelled) {
+            onCurrent(current); setFresh(true); setError('')
+            setDelayedRechecks(old => mergeBy(old, delayedPage.items, x => x.delayed_id))
+            setDelayedCursor(old => old === undefined ? delayedPage.next_before_sequence : old)
+          }
           return
         }
-        const [current, runPage, messagePage, recheckPage, operationPage] = await Promise.all([
-          api.getIncident(id), api.listRuns(id), api.listMessages(id), api.listRechecks(id), api.listOperations(id),
+        const [current, runPage, messagePage, recheckPage, operationPage, delayedPage] = await Promise.all([
+          api.getIncident(id), api.listRuns(id), api.listMessages(id), api.listRechecks(id), api.listOperations(id), api.listDelayedRechecks(id),
         ])
         const updated = await Promise.all(runPage.items.filter(r => r.run_kind === 'interaction'
           && interactionCache.current.get(r.run_id)?.run.updated_at !== r.updated_at).map(r => api.getInteraction(id, r.run_id)))
@@ -199,6 +206,8 @@ export function IncidentWorkbench({ incident, onCurrent, onApproval, approving, 
         setRuns(old => mergeBy(old, runPage.items, x => x.run_id).sort((a, b) => b.created_at.localeCompare(a.created_at) || b.run_id.localeCompare(a.run_id)))
         setMessages(old => mergeBy(old, messagePage.items, x => x.message_id).sort((a, b) => a.sequence - b.sequence))
         setRechecks(old => mergeBy(old, recheckPage.items, x => x.recheck_id))
+        setDelayedRechecks(old => mergeBy(old, delayedPage.items, x => x.delayed_id))
+        setDelayedCursor(old => old === undefined ? delayedPage.next_before_sequence : old)
         setOperations(operationPage.items)
         setRunCursor(old => old === undefined ? runPage.next_cursor : old)
         setMessageCursor(old => old === undefined ? messagePage.next_before_sequence : old)
@@ -308,7 +317,7 @@ export function IncidentWorkbench({ incident, onCurrent, onApproval, approving, 
       ...(intent === 'compare' ? { compare_run_id: compare } : {}),
     } })
   }
-  async function more(kind: 'runs' | 'messages' | 'rechecks') {
+  async function more(kind: 'runs' | 'messages' | 'rechecks' | 'delayed') {
     if (paging) return
     setPaging(true)
     try {
@@ -326,6 +335,9 @@ export function IncidentWorkbench({ incident, onCurrent, onApproval, approving, 
       } else if (kind === 'rechecks' && recheckCursor) {
         const page = await api.listRechecks(id, recheckCursor)
         setRechecks(old => mergeBy(old, page.items, x => x.recheck_id)); setRecheckCursor(page.next_before_sequence)
+      } else if (kind === 'delayed' && delayedCursor) {
+        const page = await api.listDelayedRechecks(id, delayedCursor)
+        setDelayedRechecks(old => mergeBy(old, page.items, x => x.delayed_id)); setDelayedCursor(page.next_before_sequence)
       }
     } catch (e) { setNotice(`历史读取失败，可重试：${describeError(e)}`) }
     finally { setPaging(false) }
@@ -406,6 +418,11 @@ export function IncidentWorkbench({ incident, onCurrent, onApproval, approving, 
           </> : <p className="content-panel">历史轮次只读，不提供审批入口。</p>)}
           {stage === 'results' && <>
             <IncidentOutcomePanel incident={shown} />
+            <section className="content-panel recheck-history"><h3>连续观察后的延时复查</h3>
+              {!delayedRechecks.length && <p>暂无延时复查。新连续观察通过后自动登记一次；普通单次检查不安排。</p>}
+              {[...delayedRechecks].sort((a, b) => b.sequence - a.sequence).map(item => <DelayedRecheckPanel key={item.delayed_id} item={item} />)}
+              {delayedCursor && <button disabled={paging} onClick={() => void more('delayed')}>更早延时复查</button>}
+            </section>
             <section className="content-panel recheck-history"><h3>事件的独立复查历史</h3>
               <p>以下观察属于整个事件，各自保留采样时间，不覆盖所选轮次的结论。</p>
               {!rechecks.length && <p>尚无复查记录。</p>}

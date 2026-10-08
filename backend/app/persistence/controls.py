@@ -40,6 +40,10 @@ def view(row):
 
 
 class ControlRepository(InteractionRepository):
+    def activate_delayed(self):
+        from backend.app.persistence.delayed_rechecks import activate_due
+        activate_due(self)
+
     def find_control(self, incident_id, key):
         rows = self._read("SELECT * FROM incident_agent_app.controls WHERE incident_id=%s AND client_message_id=%s", (incident_id, key))
         if not rows:

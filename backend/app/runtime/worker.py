@@ -168,6 +168,12 @@ class Worker:
         reading_checkpoint = False
         try:
             if lease.get("run_kind") == "interaction":
+                from backend.app.persistence.delayed_rechecks import WORKFLOW as DELAYED_WORKFLOW
+                if lease["workflow_version"] == DELAYED_WORKFLOW:
+                    from backend.app.runtime.delayed_rechecks import execute_delayed_recheck
+                    execute_delayed_recheck(self.repository, lease, self.lost, complete=self._complete_interaction)
+                    report("succeeded", lease)
+                    return
                 from backend.app.runtime.interactions import execute_interaction
                 (self.interaction_handler or execute_interaction)(
                     self.repository, lease, self.lost, complete=self._complete_interaction)
@@ -240,6 +246,9 @@ class Worker:
                 activate = getattr(self.repository, "activate_pending", None)
                 if activate:
                     activate()
+                delayed = getattr(self.repository, "activate_delayed", None)
+                if delayed:
+                    delayed()
                 with self._lock:
                     self.lost.clear()
                     lease = self.repository.claim(self.owner, self.settings.lease_seconds, self.settings.max_attempts)

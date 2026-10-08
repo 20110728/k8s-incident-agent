@@ -427,6 +427,18 @@ export interface Recheck {
   error_code: string | null
   collection_errors: JsonObject[]
 }
+
+export interface DelayedRecheck {
+  delayed_id: string
+  sequence: number
+  status: 'pending' | 'running' | 'passed' | 'relapsed' | 'unknown' | 'invalidated' | 'expired'
+  due_at: string
+  expires_at: string
+  finished_at: string | null
+  reason: string | null
+  initial_result: { status: string; finished_at: string; consecutive: number }
+  result: Recheck | null
+}
 export interface Operation {
   operation_id: string
   run_id: string

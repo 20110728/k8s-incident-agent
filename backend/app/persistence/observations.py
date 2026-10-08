@@ -18,6 +18,7 @@ class ObservationStore:
                 yield conn
         else:
             with self.connect() as conn:
+                conn.execute("SELECT incident_id FROM incident_agent_app.incidents WHERE incident_id=%s FOR UPDATE", (self.incident_id,))
                 yield conn
 
     def open(self, initial):
@@ -37,3 +38,6 @@ class ObservationStore:
                 RETURNING observation_key""", (Jsonb(payload), self.key, self.token)).fetchone()
             if row is None:
                 raise LeaseLost("observation ownership changed")
+            if payload.get("status") == "passed":
+                from backend.app.persistence.delayed_rechecks import schedule
+                schedule(conn, self.key, self.incident_id, self.lease, payload)
