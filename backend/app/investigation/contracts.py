@@ -15,6 +15,7 @@ class Collect(Strict):
     reason: str = Field(min_length=1, max_length=600)
     evidence_ids: list[str] = Field(min_length=1, max_length=20)
     requests: list[ToolRequest] = Field(min_length=1, max_length=2)
+    resample_reason: Literal["user_change", "stale"] | None = None
 
 
 class Conclude(Strict):
@@ -27,6 +28,7 @@ class Ask(Strict):
     question: str = Field(min_length=1, max_length=600)
     reason: str = Field(min_length=1, max_length=600)
     evidence_ids: list[str] = Field(min_length=1, max_length=20)
+    slot: Literal["onset", "changes", "symptom", "impact"] | None = None
 
 
 class Propose(Strict):

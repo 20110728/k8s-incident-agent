@@ -20,11 +20,11 @@ def saved_result(budget, ticket):
         return deepcopy(call["result"])
 
 
-def bind_baseline(budget, baseline):
+def bind_baseline(budget, baseline, version="readonly-investigation-v1"):
     value = digest(baseline)
     with budget.edit() as data:
-        saved = data.setdefault("investigation", {"version": "readonly-investigation-v1", "baseline_digest": value})
-        if saved["baseline_digest"] != value or saved["version"] != "readonly-investigation-v1":
+        saved = data.setdefault("investigation", {"version": version, "baseline_digest": value})
+        if saved["baseline_digest"] != value or saved["version"] != version:
             raise ValueError("INVESTIGATION_BASELINE_CHANGED")
 
 

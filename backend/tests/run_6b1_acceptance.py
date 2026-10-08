@@ -11,11 +11,11 @@ from backend.app.persistence.settings import DatabaseSettings, get_database_sett
 from backend.tests.run_1a_acceptance import isolated_database_url
 
 
-def main():
+def main(*, stage="6b1", extra_targets=(), required_reports=("evidence-change.json",)):
     database = os.environ.get("INCIDENT_AGENT_TEST_DATABASE_NAME", "")
     audit = os.environ.get("INCIDENT_AGENT_TEST_AUDIT_DIR")
-    if not database.startswith("incident_agent_test_6b1_") or not audit:
-        raise ValueError("Use bash scripts/accept_stage6b1.sh")
+    if not database.startswith(f"incident_agent_test_{stage}_") or not audit:
+        raise ValueError(f"Use bash scripts/accept_stage{stage}.sh")
     environment = dict(os.environ)
     url = isolated_database_url(get_database_settings().database_url.get_secret_value(), database)
     environment["INCIDENT_AGENT_TEST_DATABASE_URL"] = url
@@ -26,6 +26,7 @@ def main():
         "backend/tests/unit/test_evidence_collector.py", "backend/tests/diagnosis_policy",
         "backend/tests/llm", "backend/tests/rag", "backend/tests/persistence/test_migrations.py",
         "backend/tests/runtime/test_operation_protocol.py", "backend/tests/runtime/test_operations_postgres.py"]
+    targets.extend(extra_targets)
     result = subprocess.call([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
                               *targets, "--junitxml=" + str(report)], env=environment)
     if result:
@@ -34,8 +35,8 @@ def main():
     if not cases or any(case.find(tag) is not None for case in cases for tag in ("failure", "error", "skipped")):
         print("Acceptance incomplete: skipped/failed tests", file=sys.stderr)
         return 1
-    if not (Path(audit) / "evidence-change.json").is_file():
-        print("Missing evidence-change report", file=sys.stderr)
+    if any(not (Path(audit) / name).is_file() for name in required_reports):
+        print("Missing required acceptance report", file=sys.stderr)
         return 1
     return 0
 

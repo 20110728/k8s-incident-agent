@@ -141,13 +141,23 @@ class ReadOnlyToolbox:
                  "previous": request.previous}
         return sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
-    def call(self, payload, *, request_id=None, keep_tokens=0, keep_seconds=0):
+    def call(self, payload, *, request_id=None, keep_tokens=0, keep_seconds=0, sampling=None):
         request, ref = self.validate_request(payload)
         evidence_hash = sha256(json.dumps(self.state.get("evidence", []), sort_keys=True, default=str).encode()).hexdigest()
         key = self.query_key(payload) if request_id else sha256((evidence_hash + request.model_dump_json()).encode()).hexdigest()
+        fingerprint = sha256(request.model_dump_json().encode()).hexdigest()
+        if sampling is not None:
+            with self.budget.edit() as data:
+                saved = data.get("sampling_grants", {}).get(request_id, {}).get("grant")
+                if not saved or saved != sampling or saved["semantic_key"] != self.query_key(payload):
+                    raise ValueError("SAMPLING_GRANT_INVALID")
+            key = sampling["query_key"]
+            fingerprint = sha256((fingerprint + json.dumps(sampling, sort_keys=True)).encode()).hexdigest()
         ticket = self.budget.reserve("tool", 15, extra=True, key=key,
-            metadata={"request": request.model_dump(), "evidence_hash": evidence_hash},
-            **({"request_id": request_id, "fingerprint": sha256(request.model_dump_json().encode()).hexdigest(),
+            metadata={"request": request.model_dump(), "evidence_hash": evidence_hash,
+                      "semantic_key": self.query_key(payload), "sample_generation": sampling["generation"] if sampling else 0,
+                      "sampling_basis": sampling["basis"] if sampling else "initial"},
+            **({"request_id": request_id, "fingerprint": fingerprint,
                 "keep_tokens": keep_tokens, "keep_seconds": keep_seconds} if request_id else {}))
         if request_id:
             from backend.app.investigation.records import saved_result

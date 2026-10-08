@@ -3,6 +3,7 @@ from copy import deepcopy
 from typing import Any, TypedDict
 
 from langgraph.graph import StateGraph, START, END
+from langgraph.types import interrupt
 from pydantic import ValidationError
 
 from backend.app.agent.diagnosis_policy import diagnostic_facts, validate_diagnosis_assessment, InvalidDiagnosisAssessment
@@ -15,6 +16,8 @@ from backend.app.investigation.model import call_model
 from backend.app.investigation.records import bind_baseline, correction, IncompleteRequest, digest
 from backend.app.runtime.budget import BudgetExceeded
 from backend.app.persistence.leases import LeaseLost
+from backend.app.investigation.dialogue import VERSION, question_for, accept_answer
+from backend.app.investigation.resampling import authorize_sample, FRESHNESS_SECONDS
 
 
 class InvestigationState(TypedDict, total=False):
@@ -26,6 +29,9 @@ class InvestigationState(TypedDict, total=False):
     decision: dict[str, Any]
     phase: str
     output: dict[str, Any]
+    question: dict[str, Any] | None
+    asked_slots: list[str]
+    answers: list[dict[str, Any]]
 
 
 def handoff(state, code):
@@ -79,8 +85,12 @@ def validate_decision(value, prompt, current, toolbox, terminal):
     return decision.model_dump(mode="json")
 
 
-def build_investigation_graph(budget, toolbox, model, *, checkpointer=None):
+def build_investigation_graph(budget, toolbox, model, *, checkpointer=None, interactive=False):
     """Internal acceptance entry point. No production route or worker switch yet."""
+    if interactive and checkpointer is None:
+        raise ValueError("INTERACTIVE_CHECKPOINTER_REQUIRED")
+    version = VERSION if interactive else "readonly-investigation-v1"
+    prefix = "6b2" if interactive else "6b1"
     def initialize(state):
         baseline = state["baseline"]
         if digest(baseline) != digest(toolbox.state):
@@ -93,18 +103,26 @@ def build_investigation_graph(budget, toolbox, model, *, checkpointer=None):
         for field in ("namespace", "service_name"):
             if baseline["request"][field] != budget.lease["input_payload"][field]:
                 raise ValueError("RUN_TARGET_MISMATCH")
-        bind_baseline(budget, baseline)
-        return {"workflow_version": "readonly-investigation-v1", "phase": "investigating", "step": 0, "observations": [], "history": []}
+        bind_baseline(budget, baseline, version)
+        return {"workflow_version": version, "phase": "investigating", "step": 0, "observations": [], "history": [],
+                "question": None, "answers": [], "asked_slots": []}
+
+    def check_version(state):
+        if state.get("workflow_version") != version:
+            raise ValueError("INVESTIGATION_WORKFLOW_VERSION_CHANGED")
 
     def decide(state):
+        check_version(state)
         step = state["step"] + 1
         terminal = step > 3
-        request_id = f"6b1:{'final' if terminal else 'decision'}:{step}"
+        request_id = f"{prefix}:{'final' if terminal else 'decision'}:{step}"
         current = current_state(state["baseline"], state["observations"])
         feedback = None
         try:
             for attempt in range(2):
-                prompt = build_context(current, toolbox.manifest(), state["history"], terminal_only=terminal, feedback=feedback)
+                human = {"answers": state.get("answers", []), "asked_slots": state.get("asked_slots", []),
+                         "freshness_seconds": FRESHNESS_SECONDS} if interactive else None
+                prompt = build_context(current, toolbox.manifest(), state["history"], terminal_only=terminal, feedback=feedback, dialogue=human)
                 response = call_model(model, budget, prompt, request_id + (":correction" if attempt else ""),
                                       decision_key=None if terminal else request_id, terminal=terminal)
                 if response.get("error"):
@@ -113,6 +131,13 @@ def build_investigation_graph(budget, toolbox, model, *, checkpointer=None):
                     if response.get("parse_error"):
                         raise ValueError(response["parse_error"])
                     decision = validate_decision(response.get("parsed"), prompt, current, toolbox, terminal)
+                    if interactive and decision["action"] == "ask_user":
+                        question_for(state, decision, budget, toolbox.manifest(), current["evidence"])
+                    if (interactive and state.get("answers") and decision["action"] in {"conclude", "propose_plan"}
+                            and decision["diagnosis"]["fault_category"] == "no_fault_detected"):
+                        raise ValueError("CURRENT_HEALTH_REQUIRES_NEW_BASELINE_AFTER_HUMAN_WAIT")
+                    if not interactive and decision.get("resample_reason"):
+                        raise ValueError("RESAMPLING_REQUIRES_INTERACTIVE_WORKFLOW")
                     break
                 except (ValidationError, ValueError) as error:
                     # Permission/resource boundaries cannot be negotiated by retry.
@@ -123,6 +148,10 @@ def build_investigation_graph(budget, toolbox, model, *, checkpointer=None):
                       "missing_fact": decision.get("missing_fact"), "evidence_ids": decision.get("evidence_ids", [])}
             if decision["action"] == "collect":
                 return {"step": step, "decision": decision, "history": [*state["history"], record], "phase": "collecting"}
+            if interactive and decision["action"] == "ask_user":
+                question = question_for(state, decision, budget, toolbox.manifest(), current["evidence"])
+                return {"step": step, "decision": decision, "history": [*state["history"], record], "phase": "waiting_user",
+                        "question": question, "asked_slots": [*state.get("asked_slots", []), decision["slot"]]}
             output = {"status": decision["action"], "decision": decision, "cluster_writes_executed": False}
             if decision["action"] in {"ask_user", "propose_plan"}:
                 output.update(status="handoff", stop_reason="READONLY_STAGE_REQUIRES_6B2")
@@ -133,19 +162,27 @@ def build_investigation_graph(budget, toolbox, model, *, checkpointer=None):
             return {"phase": "finished", "output": handoff(state, str(error)[:200])}
 
     def collect(state):
+        check_version(state)
         observations = deepcopy(state["observations"])
         results = []
         try:
+            scheduled = []
             for index, request in enumerate(state["decision"]["requests"]):
                 # Complete request validation occurred for the entire batch before
                 # its first read. Execution rechecks identity and reserves budget.
-                result = toolbox.call(request, request_id=f"6b1:tool:{state['step']}:{index}",
-                                      keep_tokens=CALL_TOKENS, keep_seconds=CALL_SECONDS)
+                request_id = f"{prefix}:tool:{state['step']}:{index}"
+                sampling = authorize_sample(budget, toolbox, request, request_id,
+                    state["decision"].get("resample_reason"), state.get("answers", [])) if interactive else None
+                scheduled.append((request, request_id, sampling))
+            for request, request_id, sampling in scheduled:
+                result = toolbox.call(request, request_id=request_id,
+                                      keep_tokens=CALL_TOKENS, keep_seconds=CALL_SECONDS,
+                                      **({"sampling": sampling} if interactive else {}))
                 rows = adapt(result, request, toolbox.refs[request["resource_ref"]])
                 known = {e["evidence_id"] for e in observations}
                 observations.extend(e for e in rows if e["evidence_id"] not in known)
                 results.append({"tool": request["tool"], "coverage": result["coverage"], "error_code": result["error_code"],
-                                "evidence_ids": [e["evidence_id"] for e in rows]})
+                                "evidence_ids": [e["evidence_id"] for e in rows], **({"sampling": sampling} if interactive else {})})
                 if result.get("target_changed"):
                     changed = {**state, "observations": observations}
                     return {"observations": observations, "phase": "finished", "output": handoff(changed, result["error_code"])}
@@ -157,12 +194,28 @@ def build_investigation_graph(budget, toolbox, model, *, checkpointer=None):
         except (BudgetExceeded, IncompleteRequest, ValueError) as error:
             return {"observations": observations, "phase": "finished", "output": handoff({**state, "observations": observations}, str(error)[:200])}
 
+    def await_user_input(state):
+        check_version(state)
+        # No model, tool or budget reservation before interrupt. LangGraph
+        # re-enters this node on resume, so side effects belong after interrupt.
+        value = interrupt(state["question"])
+        answer = accept_answer(budget, state["question"], value)
+        answers = [*state.get("answers", []), answer]
+        update = {"answers": answers, "question": None, "phase": "investigating"}
+        if answer["skip"]:
+            update.update(phase="finished", output=handoff(state, "HUMAN_QUESTION_SKIPPED"))
+        return update
+
     builder = StateGraph(InvestigationState)
     builder.add_node("initialize", initialize)
     builder.add_node("decide", decide)
     builder.add_node("collect", collect)
+    if interactive:
+        builder.add_node("await_investigation_input", await_user_input)
+        builder.add_conditional_edges("await_investigation_input", lambda s: "decide" if s["phase"] == "investigating" else END)
     builder.add_edge(START, "initialize")
     builder.add_edge("initialize", "decide")
-    builder.add_conditional_edges("decide", lambda s: "collect" if s["phase"] == "collecting" else END)
+    builder.add_conditional_edges("decide", lambda s: "collect" if s["phase"] == "collecting" else
+                                  "await_investigation_input" if s["phase"] == "waiting_user" else END)
     builder.add_conditional_edges("collect", lambda s: "decide" if s["phase"] == "investigating" else END)
     return builder.compile(checkpointer=checkpointer)
