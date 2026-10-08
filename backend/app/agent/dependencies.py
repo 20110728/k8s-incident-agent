@@ -38,7 +38,7 @@ from backend.app.agent.verification import (
     KubernetesRecoveryVerifier,
 )
 
-def build_kubernetes_collector(*, bounded_reads=False) -> KubernetesCollectorAdapter:
+def build_kubernetes_collector(*, bounded_reads=False, include_details=True) -> KubernetesCollectorAdapter:
     clients = create_clients(bounded_reads=bounded_reads)
 
     def collect_fn(
@@ -49,6 +49,7 @@ def build_kubernetes_collector(*, bounded_reads=False) -> KubernetesCollectorAda
             clients=clients,
             namespace=namespace,
             service_name=service_name,
+            include_details=include_details,
         ).model_dump(mode="json")
         bundle["service_profile"] = collect_profile(clients, bundle)
         bundle["business_checks"] = collect_business_checks(clients, bundle)

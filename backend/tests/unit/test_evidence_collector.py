@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 from kubernetes.client.exceptions import ApiException
 
@@ -160,11 +161,10 @@ def test_abnormal_restarted_pod_collects_previous_logs(
             content="test log",
         )
 
-    monkeypatch.setattr(
-        collector,
-        "get_pod_logs",
-        fake_logs,
-    )
+    logs = Mock(side_effect=fake_logs)
+    events = Mock(return_value=[])
+    monkeypatch.setattr(collector, "get_pod_logs", logs)
+    monkeypatch.setattr(collector, "get_pod_events", events)
 
     monkeypatch.setattr(
         collector,
@@ -211,6 +211,15 @@ def test_abnormal_restarted_pod_collects_previous_logs(
     assert "order-service" in bundle.deployments
     assert "worker-1" in bundle.nodes
     assert bundle.errors == []
+
+    logs.reset_mock()
+    events.reset_mock()
+    slim = collector.collect_service_evidence(clients=clients, namespace="agent-demo",
+                                              service_name="order-service", include_details=False)
+    logs.assert_not_called()
+    events.assert_not_called()
+    assert slim.pod_logs == [] and slim.pod_events == {}
+    assert slim.owner_chains and slim.pod_statuses and slim.deployments
 
 
 def test_service_api_error_is_recorded(monkeypatch):

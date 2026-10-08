@@ -44,21 +44,32 @@ class RunBudget:
             yield data
             conn.execute("UPDATE incident_agent_app.run_budgets SET payload=%s WHERE run_id=%s", (Jsonb(data), self.lease["run_id"]))
 
-    def reserve(self, kind, seconds=0, *, extra=False, tokens=0, key=None, metadata=None):
-        if seconds < 0 or tokens < 0 or (kind == "tool" and not key):
+    def reserve(self, kind, seconds=0, *, extra=False, tokens=0, key=None, metadata=None,
+                request_id=None, fingerprint=None, decision_key=None, keep_tokens=0, keep_seconds=0):
+        if min(seconds, tokens, keep_tokens, keep_seconds) < 0 or (kind == "tool" and not key):
             raise ValueError("INVALID_BUDGET_RESERVATION")
         error = None
         ticket = str(uuid4())
         with self.edit() as data:
+            if request_id:
+                existing = data.get("requests", {}).get(request_id)
+                if existing:
+                    if data["calls"][existing].get("fingerprint") != fingerprint:
+                        raise ValueError("REQUEST_INPUT_CHANGED")
+                    return existing, False
             policy = data["policy"]
-            if kind == "tool" and key in data["tools"]:
+            if decision_key and decision_key not in data["decisions"] and len(data["decisions"]) >= policy["decisions"]:
+                error = "INVESTIGATION_DECISION_LIMIT"
+            elif kind == "investigation_model" and sum(c["kind"] == kind for c in data["calls"].values()) >= 5:
+                error = "MODEL_ATTEMPT_LIMIT"
+            elif kind == "tool" and key in data["tools"]:
                 error = "DUPLICATE_TOOL_EVIDENCE"
             elif kind == "tool" and len(data["tools"]) >= policy["tools"]:
                 error = "TOOL_REQUEST_LIMIT"
-            elif (data["seconds"] + seconds > policy["active_seconds"] or
+            elif (data["seconds"] + seconds + keep_seconds > policy["active_seconds"] or
                   extra and data["extra_seconds"] + seconds > policy["extra_seconds"]):
                 error = "ACTIVE_TIME_LIMIT"
-            elif data["tokens"] + tokens > policy["total_tokens"]:
+            elif data["tokens"] + tokens + keep_tokens > policy["total_tokens"]:
                 error = "MODEL_TOKEN_LIMIT"
             if error:
                 data["exhausted"] = error
@@ -68,11 +79,16 @@ class RunBudget:
                 data["tokens"] += tokens
                 if kind == "tool":
                     data["tools"].append(key)
+                if decision_key and decision_key not in data["decisions"]:
+                    data["decisions"].append(decision_key)
                 data["calls"][ticket] = {"kind": kind, "reserved_seconds": seconds, "extra": extra,
                     "reserved_tokens": tokens, "status": "started_or_interrupted", "metadata": metadata or {}}
+                if request_id:
+                    data.setdefault("requests", {})[request_id] = ticket
+                    data["calls"][ticket].update(request_id=request_id, fingerprint=fingerprint)
         if error:
             raise BudgetExceeded(error)
-        return ticket
+        return (ticket, True) if request_id else ticket
 
     def settle(self, ticket, elapsed, *, tokens=None, usage=None, status="completed", result=None):
         with self.edit() as data:

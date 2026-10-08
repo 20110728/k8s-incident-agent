@@ -3,6 +3,7 @@ from hashlib import sha256
 import json
 import re
 import time
+from datetime import UTC, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -123,20 +124,40 @@ class ReadOnlyToolbox:
                 raise ValueError("RESOURCE_OWNERSHIP_CHANGED")
         return service, deployment
 
-    def call(self, payload):
+    def validate_request(self, payload):
         request = ToolRequest.model_validate(payload)
         ref = self.refs.get(request.resource_ref)
         allowed = {"resource_summary": "service", "registered_business": "service", "pod_logs": "pod",
                    "pod_events": "pod", "endpoint_slice": "endpoint_slice", "deployment": "deployment", "replica_set": "replica_set"}
         if not ref or ref["kind"] != allowed[request.tool] or (request.tool != "pod_logs" and (request.previous or request.tail_lines != 100)):
             raise ValueError("TOOL_RESOURCE_NOT_ALLOWED")
+        return request, ref
+
+    def query_key(self, payload):
+        request, ref = self.validate_request(payload)
+        # Line count changes and unrelated evidence do not create a new query.
+        value = {"tool": request.tool, "uid": ref["uid"], "namespace": ref["namespace"],
+                 "container": ref.get("container") if request.tool == "pod_logs" else None,
+                 "previous": request.previous}
+        return sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+
+    def call(self, payload, *, request_id=None, keep_tokens=0, keep_seconds=0):
+        request, ref = self.validate_request(payload)
         evidence_hash = sha256(json.dumps(self.state.get("evidence", []), sort_keys=True, default=str).encode()).hexdigest()
-        key = sha256((evidence_hash + request.model_dump_json()).encode()).hexdigest()
+        key = self.query_key(payload) if request_id else sha256((evidence_hash + request.model_dump_json()).encode()).hexdigest()
         ticket = self.budget.reserve("tool", 15, extra=True, key=key,
-                                     metadata={"request": request.model_dump(), "evidence_hash": evidence_hash})
+            metadata={"request": request.model_dump(), "evidence_hash": evidence_hash},
+            **({"request_id": request_id, "fingerprint": sha256(request.model_dump_json().encode()).hexdigest(),
+                "keep_tokens": keep_tokens, "keep_seconds": keep_seconds} if request_id else {}))
+        if request_id:
+            from backend.app.investigation.records import saved_result
+            ticket, fresh = ticket
+            if not fresh:
+                return saved_result(self.budget, ticket)
         start = time.monotonic()
         result = {"tool": request.tool, "resource_ref": request.resource_ref, "coverage": "unknown",
-                  "untrusted": True, "truncated": False, "error_code": None, "text": ""}
+                  "untrusted": True, "truncated": False, "error_code": None, "text": "",
+                  "collected_at": datetime.now(UTC).isoformat(), "request_id": request_id}
         try:
             with read_budget(15):
                 service, deployment = self.validate_live(ref)
@@ -145,8 +166,13 @@ class ReadOnlyToolbox:
                 text = redact_output(value)
                 result.update(text=text[:12000], truncated=limited or len(text) > 12000,
                               coverage="partial" if limited or len(text) > 12000 else "observed")
+                if len(text) <= 12000:
+                    result["payload"] = json.loads(text)
         except Exception as error:
             result.update(error_code="ACCESS_DENIED" if getattr(error, "status", None) in (401, 403) else "TOOL_READ_FAILED_OR_TARGET_CHANGED")
+            result["target_changed"] = isinstance(error, ValueError) and str(error) in {
+                "PROFILE_CHANGED", "TARGET_CHANGED", "POD_OWNERSHIP_CHANGED", "RESOURCE_OWNERSHIP_CHANGED",
+                "REPLICASET_RECREATED_DURING_COLLECTION"}
         finally:
             self.budget.settle(ticket, time.monotonic() - start, status="completed" if result["coverage"] != "unknown" else "failed_or_unknown", result=result)
         return result

@@ -71,6 +71,7 @@ def collect_service_evidence(
     clients: KubernetesClients,
     namespace: str,
     service_name: str,
+    *, include_details: bool = True,
 ) -> ServiceEvidenceBundle:
     bundle = ServiceEvidenceBundle(
         namespace=namespace,
@@ -162,23 +163,24 @@ def collect_service_evidence(
                 error=error,
             )
 
-        try:
-            bundle.pod_events[pod_name] = get_pod_events(
-                clients=clients,
-                namespace=namespace,
-                pod_name=pod_name,
-            )
-        except Exception as error:
-            _record_error(
-                bundle=bundle,
-                operation="get_pod_events",
-                resource_kind="Pod",
-                resource_name=pod_name,
-                error=error,
-            )
+        if include_details:
+            try:
+                bundle.pod_events[pod_name] = get_pod_events(
+                    clients=clients,
+                    namespace=namespace,
+                    pod_name=pod_name,
+                )
+            except Exception as error:
+                _record_error(
+                    bundle=bundle,
+                    operation="get_pod_events",
+                    resource_kind="Pod",
+                    resource_name=pod_name,
+                    error=error,
+                )
 
         if (
-            pod_status is not None
+            include_details and pod_status is not None
             and _pod_is_abnormal(pod_status)
             and _pod_may_have_logs(pod_status)
         ):
