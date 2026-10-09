@@ -3,6 +3,7 @@ import { normalizeIncidentId } from './incidentSession'
 
 export const WORKSPACE_STAGES = [
   { id: 'overview', label: '事件概览' },
+  { id: 'investigation', label: '调查过程' },
   { id: 'evidence', label: '采集与证据' },
   { id: 'diagnosis', label: 'Diagnosis' },
   { id: 'plan', label: 'Remediation plan' },

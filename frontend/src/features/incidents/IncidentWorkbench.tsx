@@ -3,6 +3,7 @@ import { ApiClient } from '../../api'
 import type { CommandReceipt, DelayedRecheck, IncidentStatusResponse, InteractionIntent, InteractionResult, Message, Operation, Question, Recheck, RunSummary, SubmitApprovalRequest } from '../../api/types'
 import { ApprovalDecisionPanel } from './ApprovalDecisionPanel'
 import { IncidentAnalysis } from './IncidentAnalysis'
+import { InvestigationPanel } from './InvestigationPanel'
 import { IncidentDebugPanel } from './IncidentDebugPanel'
 import { RunBudgetPanel } from './RunBudgetPanel'
 import { IncidentOutcomePanel } from './IncidentOutcomePanel'
@@ -18,22 +19,37 @@ const time = (value?: string | null) => value ? new Date(value).toLocaleString()
 const commandNames: Record<InteractionIntent, string> = { auto: '发送消息', explain: '解释依据', compare: '比较两轮',
   supplement: '仅补充信息', investigate: '继续调查', recheck: '重新检查', observe: '观察稳定性', stop: '停止调查' }
 
-function QuestionForm({ question, disabled, submit }: {
-  question: Question; disabled: boolean; submit: (answers: Record<string, string>, skip: boolean) => void
+export function changedResourceRefs(question: Question, selected: string[], skip: boolean) {
+  if (skip || !question.questions.some(q => q.slot === 'changes')) return []
+  const allowed = new Set((question.change_candidates ?? []).map(r => r.resource_ref))
+  return [...new Set(selected)].filter(ref => allowed.has(ref))
+}
+
+export function QuestionForm({ question, disabled, submit }: {
+  question: Question; disabled: boolean; submit: (answers: Record<string, string>, skip: boolean, refs: string[]) => void
 }) {
   const [answers, setAnswers] = useState<Record<string, string>>({})
-  return <form className="question-card" onSubmit={e => { e.preventDefault(); submit(answers, false) }}>
+  const [selected, setSelected] = useState<string[]>([])
+  const candidates = question.questions.some(q => q.slot === 'changes') ? question.change_candidates ?? [] : []
+  return <form className="question-card" onSubmit={e => { e.preventDefault(); submit(answers, false, changedResourceRefs(question, selected, false)) }}>
     <h3>需要你补充信息 · 第 {question.version} 轮</h3>
     <p>{question.reason}</p>
     {question.questions.map(q => <label key={q.slot}>{q.text}
       <textarea required maxLength={2000} disabled={disabled} value={answers[q.slot] ?? ''}
         onChange={e => setAnswers(old => ({ ...old, [q.slot]: e.target.value }))} />
     </label>)}
+    {!!candidates.length && <fieldset disabled={disabled} className="changed-resources"><legend>你确认改动过哪些对象？（可不选）</legend>
+      <p>只勾选你确定改过的对象，最多 20 项。不确定就留空；勾选提供复采线索，不授权修复。</p>
+      {candidates.map(item => <label key={item.resource_ref}><input type="checkbox" checked={selected.includes(item.resource_ref)}
+        disabled={selected.length >= 20 && !selected.includes(item.resource_ref)}
+        onChange={e => setSelected(old => e.target.checked ? [...old, item.resource_ref] : old.filter(ref => ref !== item.resource_ref))} />
+        {item.kind} · {item.name}{item.container ? ` / ${item.container}` : ''}</label>)}
+    </fieldset>}
     <div className="workbench-actions">
       <button disabled={disabled || question.questions.some(q => !answers[q.slot]?.trim())}>回答并继续</button>
-      <button type="button" disabled={disabled} onClick={() => submit({}, true)}>不知道，跳过追问</button>
+      <button type="button" disabled={disabled} onClick={() => submit({}, true, [])}>不知道，跳过追问</button>
     </div>
-    <small>回答保存为未核实陈述。继续后会重新采集；跳过可能保留未知结论。</small>
+    <small>回答保存为未核实陈述。是否补采由后续调查决定，并受权限和预算限制；跳过可能保留未知结论。</small>
   </form>
 }
 
@@ -398,12 +414,15 @@ export function IncidentWorkbench({ incident, onCurrent, onApproval, approving, 
           {stage === 'overview' && <section className="content-panel overview-panel">
             <h3>原始描述</h3><p className="preserve-text">{incident.request.description}</p>
             <h3>本轮进展</h3><p>{taskLabel(shown.run?.status, shown.phase)}</p>
+            {shown.investigation && <button onClick={() => chooseStage('investigation')}>查看调查过程 →</button>}
             <p>证据 {shown.evidence.length} 条 · 诊断：{shown.diagnosis?.fault_category ?? '尚未形成结论'}</p>
             {selectedCurrent && permissions.answer && <button onClick={() => setChatOpen(true)}>回答待补充的问题 →</button>}
             {selectedCurrent && incident.waiting_for_approval && <button onClick={() => chooseStage('approval')}>查看待审批方案 →</button>}
             {shown.diagnosis && <button onClick={() => chooseStage('diagnosis')}>查看诊断依据 →</button>}
             <details><summary>任务详情</summary><p>run：{shown.run?.run_id ?? '旧事件，无任务编号'}</p><p>更新时间：{time(shown.run?.updated_at)}</p><p>错误：{shown.run?.last_error_code ?? '无'}</p></details>
           </section>}
+          {stage === 'investigation' && <><InvestigationPanel value={shown.investigation} evidenceIds={shown.evidence.map(e => e.evidence_id)} />
+            <RunBudgetPanel key={shown.run?.run_id ?? 'legacy'} incidentId={id} runId={shown.run?.run_id} /></>}
           {['diagnosis', 'evidence', 'plan'].includes(stage) && <>
             {citationNotice && <p role="alert">{citationNotice}</p>}
             <IncidentAnalysis incident={shown} section={stage as 'diagnosis' | 'evidence' | 'plan'} />
@@ -431,9 +450,9 @@ export function IncidentWorkbench({ incident, onCurrent, onApproval, approving, 
               {recheckCursor && <button disabled={paging} onClick={() => void more('rechecks')}>更早复查</button>}
             </section>
           </>}
-          {stage === 'debug' && <><section className="content-panel"><h3>本轮调用用量（未计价）</h3>
+          {stage === 'debug' && <>{shown.investigation ? <p>本轮使用调查模型；方案由程序生成，不另调规划模型。调用与用量见下面预算。</p> : <section className="content-panel"><h3>本轮调用用量（未计价）</h3>
             <p>诊断：{Object.keys(shown.llm_usage).length ? JSON.stringify(shown.llm_usage) : '未记录'}</p>
-            <p>方案：{Object.keys(shown.remediation_llm_usage).length ? JSON.stringify(shown.remediation_llm_usage) : '未记录'}</p></section>
+            <p>方案：{Object.keys(shown.remediation_llm_usage).length ? JSON.stringify(shown.remediation_llm_usage) : '未记录'}</p></section>}
             <RunBudgetPanel key={shown.run?.run_id ?? 'legacy'} incidentId={id} runId={shown.run?.run_id} />
             <IncidentDebugPanel incident={shown} /></>}
         </>}
@@ -463,9 +482,10 @@ export function IncidentWorkbench({ incident, onCurrent, onApproval, approving, 
             {receipt.diagnosis_run_id && <small>新轮次：{receipt.diagnosis_run_id}</small>}</div>}
           {selectedCurrent && permissions.answer && incident.run?.question && <QuestionForm
             key={`${incident.run.question.question_id}:${incident.run.question.version}`} question={incident.run.question} disabled={locked}
-            submit={(answers, skip) => { if (locked) return; void execute({ kind: 'answer', incidentId: id, runId: incident.run!.run_id,
+            submit={(answers, skip, refs) => { if (locked) return; void execute({ kind: 'answer', incidentId: id, runId: incident.run!.run_id,
               body: { client_message_id: createClientKey(), content: skip ? '不知道，跳过追问' : '回答追问',
-                question_id: incident.run!.question!.question_id, version: incident.run!.question!.version, answers, skip } }) }} />}
+                question_id: incident.run!.question!.question_id, version: incident.run!.question!.version, answers, skip,
+                ...(refs.length ? { changed_resource_refs: refs } : {}) } }) }} />}
         </div>
         <div className="conversation-composer">
           {pending && <div className="workbench-warning" role="status">有请求尚未确认：{pending.body.client_message_id}。刷新不会重发。

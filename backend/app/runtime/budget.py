@@ -212,10 +212,21 @@ def budget_view(repo, incident_id, run_id):
         return {"available": False, "run_id": run_id}
     data = rows[0]["payload"]
     policy = data["policy"]
+    # Internal replay results may contain entire baselines/logs/provider output.
+    # Keep them in storage, not in the public budget endpoint.
+    from backend.app.tools.investigation import redact_output
+    public_fields = {"kind", "reserved_seconds", "extra", "reserved_tokens", "status", "metadata",
+                     "request_id", "elapsed_seconds", "usage", "charged_tokens"}
+    calls = json.loads(redact_output([{k: v for k, v in call.items() if k in public_fields} for call in data["calls"].values()]))
+    models = [call for call in calls if call["kind"] in {"model", "investigation_model"}]
+    reported = [call for call in models if type((call.get("usage") or {}).get("total_tokens")) is int
+                and call["usage"]["total_tokens"] > 0]
     return {"available": True, "run_id": run_id, "policy": policy,
+        "generation": {"attempts": len(models), "reported_tokens": sum(call["usage"]["total_tokens"] for call in reported),
+            "unreported_attempts": len(models) - len(reported)},
         "used": {"active_seconds": data["seconds"], "extra_seconds": data["extra_seconds"], "tokens": data["tokens"],
                  "decisions": len(data["decisions"]), "tools": len(data["tools"])},
-        "exhausted": data["exhausted"], "calls": list(data["calls"].values()),
+        "exhausted": data["exhausted"], "calls": calls,
         "handoff": {"reason": data["exhausted"],
             "known": "已完成的采集与诊断仍在本轮记录中；预算拒绝不会证明故障已消失。",
             "unknown": "未完成、失败或截断的采集不能证明目标健康；丢失 usage 的模型调用保留预留额度。",

@@ -10,6 +10,8 @@ export function BudgetDetails({ value }: { value: RunBudget }) {
   return <>
     <p>活动时间 {used.active_seconds.toFixed(1)} / {policy.active_seconds} 秒；追加调查 {used.extra_seconds.toFixed(1)} / {policy.extra_seconds} 秒</p>
     <p>调查决策 {used.decisions} / {policy.decisions}；追加工具 {used.tools} / {policy.tools}；Token 记账 {used.tokens} / {policy.total_tokens}</p>
+    {value.generation && <p>生成调用尝试 {value.generation.attempts} 次（含失败或中断）；供应商已报告 {value.generation.reported_tokens} Token；
+      未报告用量 {value.generation.unreported_attempts} 次。此处不含 Embedding，预算总记账不等于此处已报告量。</p>}
     <p>人工等待不计时。未返回用量的调用保留预留额度；Token 包含估算，不代表精确费用。</p>
     {value.handoff && <div role="status"><p>预算限制：{value.handoff.reason}</p><p>{value.handoff.known}</p><p>{value.handoff.unknown}</p><p>{value.handoff.next_step}</p></div>}
     <details><summary>预算与只读工具记录</summary><pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 400, overflow: 'auto' }}>{JSON.stringify(value.calls, null, 2)}</pre></details>

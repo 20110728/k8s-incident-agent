@@ -2,6 +2,7 @@ from typing import Any, Literal
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
+from backend.app.investigation.presentation import investigation_view
 
 from backend.app.agent.schemas import (
     ActionExecutionResult,
@@ -66,6 +67,7 @@ class IncidentStatusResponse(BaseModel):
     run: RunSummary | None = None
     execution_mode: Literal["sync", "queued"] = "sync"
     worker_available: bool = False
+    investigation: dict[str, Any] | None = None
 
     incident_id: str = Field(min_length=1)
     thread_id: str = Field(min_length=1)
@@ -144,6 +146,7 @@ class IncidentStatusResponse(BaseModel):
         waiting_for_approval: bool,
     ) -> "IncidentStatusResponse":
         return cls(
+            investigation=investigation_view(state),
             incident_id=incident_id,
             thread_id=thread_id,
             phase=str(

@@ -257,6 +257,7 @@ export interface IncidentError {
 }
 
 export interface IncidentStatusResponse {
+  investigation?: InvestigationView | null
   execution_mode?: 'sync' | 'queued'
   worker_available?: boolean
   run?: RunSummary | null
@@ -321,6 +322,7 @@ export interface ReadinessResponse {
 }
 
 export interface Question {
+  change_candidates?: { resource_ref: string; kind: string; name: string; container?: string | null }[]
   question_id: string
   version: number
   questions: { slot: string; text: string }[]
@@ -375,6 +377,7 @@ export interface InteractionRequest {
   compare_run_id?: string
 }
 export interface AnswerRequest {
+  changed_resource_refs?: string[]
   client_message_id: string
   content: string
   question_id: string
@@ -446,6 +449,7 @@ export interface Operation {
   error_code: string | null
 }
 export interface RunBudget {
+  generation?: { attempts: number; reported_tokens: number; unreported_attempts: number }
   available: boolean
   run_id: string
   policy?: { active_seconds: number; extra_seconds: number; total_tokens: number; decisions: number; tools: number }
@@ -453,4 +457,17 @@ export interface RunBudget {
   exhausted?: string | null
   calls?: unknown[]
   handoff?: { reason: string; known: string; unknown: string; next_step: string } | null
+}
+
+export interface InvestigationView {
+  version: number
+  steps: { step: number; action: string; reason: string | null; missing_fact: string | null; evidence_ids: string[];
+    results: { tool: string; coverage: string; error_code: string | null; evidence_ids: string[]; generation: number }[] }[]
+  observations: { evidence_id: string; origin: string; resource_type: string; resource_name: string;
+    collected_at: string | null; coverage: string; error: string | null; truncated: boolean; current: boolean }[]
+  omitted_observations: number
+  outcome: string | null
+  stop_reason: string | null
+  question_count: number
+  answer_count: number
 }

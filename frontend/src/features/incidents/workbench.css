@@ -101,3 +101,11 @@
   .event-conversation { min-height: 500px; }
   .incident-workbench textarea, .incident-workbench select { font-size: 16px; }
 }
+/* Investigation stays in its own stage; details are collapsed by default. */
+.investigation-steps { padding-left: 1.5rem; }
+.investigation-steps > li { margin-bottom: 1.25rem; }
+.investigation-result { border-left: 3px solid #cbd5e1; padding: .5rem .8rem; margin: .6rem 0; overflow-wrap: anywhere; }
+.investigation-panel { overflow-wrap: anywhere; }
+.changed-resources { min-width: 0; margin: .8rem 0; padding: .8rem; border: 1px solid #cbd5e1; border-radius: 8px; }
+.incident-workbench .changed-resources label { display: flex; flex-direction: row; align-items: center; gap: .5rem; overflow-wrap: anywhere; }
+.changed-resources input[type="checkbox"] { width: auto; flex: 0 0 auto; }
