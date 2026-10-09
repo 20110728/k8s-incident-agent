@@ -88,3 +88,5 @@ ECS 首次复验为 351 passed / 1 failed：诊断测试将缺少 `get_round` �
 - 新增 `test_compact_budget.py` 使用真实隔离 PostgreSQL/checkpointer，覆盖新旧额度、原事件的 17391 余额能收尾、纠错转收尾、禁止收尾采集、单次余额不足、已采样证据保留与检索压缩。沿用 `accept_stage6b3a.sh` / `deploy_stage6b3a.sh`，无新增配置、依赖或迁移。先结束活动任务再部署 backend/worker/frontend，用新事件确认总额 60000；旧事件仍显示原额度。
 
 本补丁只做本地静态检查；ECS 动态测试、供应商实际 Token 降幅及真实故障诊断效果仍需验收，不将受控模型通过等同于真实模型通过。
+
+ECS 复验 363 passed / 2 failed 暴露同一恢复缺陷：压缩文本保留了嵌套字典原始顺序，JSONB 重排后检索指纹变化。`compact.evidence_text` 已在投影/截断前递归固定对象键顺序，保持数组、日志及显式字段优先级；保留真实 PostgreSQL 崩溃恢复测试，并扩展模型上下文一致性断言。指纹校验不绕过，无新增配置/迁移，沿用上述脚本复验；已运行旧代码的活动任务仍应先结束再升级。

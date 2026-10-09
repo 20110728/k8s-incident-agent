@@ -128,4 +128,9 @@ def test_logs_group_exact_messages_and_retrieval_is_byte_bounded(case):
     assert len(query.encode("utf-8")) <= 2400 and "BusinessCheck" in query
     assert len(query) < len(build_retrieval_query(state))
     assert state == original
-    assert query == build_retrieval_query(json.loads(json.dumps(state, sort_keys=True)), compact=True)
+    restored = json.loads(json.dumps(state, sort_keys=True))
+    assert query == build_retrieval_query(restored, compact=True)
+    # The same projection also feeds paid model prompts, whose request
+    # fingerprints must not change solely because JSONB reordered nested keys.
+    manifest = case[1].manifest()
+    assert build_context(state, manifest, []) == build_context(restored, manifest, [])

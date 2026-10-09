@@ -1,4 +1,5 @@
 """Deterministic prompt projections; full evidence remains in persistence."""
+import json
 import re
 from backend.app.tools.investigation import redact_output
 
@@ -32,7 +33,11 @@ def log_excerpt(content):
 
 
 def evidence_text(item):
-    data = item.get("data", {})
+    # JSONB does not preserve object insertion order. Canonicalize recursively
+    # before projecting/truncating so ports, selectors and probe maps produce
+    # identical text after recovery. Array order and log line order stay intact;
+    # projection field priority below remains explicit rather than alphabetical.
+    data = json.loads(json.dumps(item.get("data", {}), sort_keys=True, ensure_ascii=False, default=str))
     kind = item.get("resource_type")
     if not isinstance(data, dict):
         return redact_output(data)
