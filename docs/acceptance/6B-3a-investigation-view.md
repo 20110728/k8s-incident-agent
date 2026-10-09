@@ -63,3 +63,5 @@ python -m scripts.export_investigation_debug --incident-id <事件ID>
 本补丁本地检查：`backend/` 与 `scripts/` 下 251 个 Python 文件 AST 解析、Git 差异检查通过；新增 11 个测试函数（含参数化用例），未本地运行 pytest、模型调用或前端构建。
 
 ECS 顺序：`git pull --ff-only origin feature/baseline-contracts` → `bash scripts/accept_stage6b3a.sh`（预期 `PASS: 6B-3a ECS acceptance.`）→ `bash scripts/deploy_stage6b3a.sh`。无新增配置、依赖或迁移；部署更新 backend、worker、frontend。最后用新事件复验浏览器调查，真实模型可选择不同有效路径，不要求必定调用日志和事件；遇到失败导出该新事件，勿重跑旧事件补记录。
+
+ECS 首次复验为 351 passed / 1 failed：诊断测试将缺少 `get_round` 的 worker 仓储传给预算展示函数。测试已改用与 API 相同的 `InteractionRepository`，连接原隔离测试数据库，并断言其他事件不能读取该任务预算。业务代码和权限检查不变；需重跑上述验收脚本确认，Starlette 弃用警告不是本次失败原因。

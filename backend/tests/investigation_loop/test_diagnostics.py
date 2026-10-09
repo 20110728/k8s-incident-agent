@@ -1,12 +1,17 @@
 """Failed decisions are explainable without re-invoking a provider or loosening rules."""
 from copy import deepcopy
+from functools import partial
 import json
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 
 from backend.app.investigation.contracts import Decision
 from backend.app.investigation.diagnostics import debug_report, error_detail, provider_diagnostics
+from backend.app.persistence.database import connect_database
+from backend.app.persistence.interactions import InteractionRepository
+from backend.app.persistence.rounds import RoundNotFound
 from backend.app.runtime.budget import budget_view
 from backend.tests.investigation_loop.test_loop import case, storage, state, identified, toolbox, Model, run, stop
 
@@ -21,10 +26,15 @@ def test_failed_policy_attempts_saved_once_and_replayed_without_provider(case):
     replay = Model(lambda _: pytest.fail("diagnostic replay invoked provider"))
     assert run(case, replay) == first
     budget = case[0]
-    view = budget_view(budget.repo, budget.lease["incident_id"], budget.lease["run_id"])
+    # Match the API repository, using the same isolated test database. The
+    # worker fixture's OperationRepository does not provide get_round().
+    view_repo = InteractionRepository(partial(connect_database, case[2]))
+    view = budget_view(view_repo, budget.lease["incident_id"], budget.lease["run_id"])
     assert view["generation"]["attempts"] == 2
     assert len([c for c in view["calls"] if c.get("validation")]) == 2
     assert all("validation_context" not in c and "result" not in c for c in view["calls"])
+    with pytest.raises(RoundNotFound):
+        budget_view(view_repo, str(uuid4()), budget.lease["run_id"])
 
 
 def test_schema_diagnostics_omit_rejected_input():
