@@ -1,9 +1,12 @@
-"""Every test creates and retains its own guarded test database, never the demo DB."""
+"""Each test owns one isolated DB; acceptance can clean successful test DBs."""
+import json
 import os
+from pathlib import Path
 import subprocess
 import sys
 import threading
 import time
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from uuid import uuid4
@@ -34,7 +37,7 @@ PAYLOAD = {"namespace": "default", "service_name": "demo", "description": "worke
 
 
 @pytest.fixture
-def storage():
+def storage(request):
     source = os.environ.get("INCIDENT_AGENT_TEST_DATABASE_URL")
     if not source:
         pytest.skip("requires isolated ECS PostgreSQL acceptance")
@@ -51,7 +54,29 @@ def storage():
         run_migrations(connection)
     with postgres_checkpointer(settings):
         pass
-    return connect, OperationRepository(connect), settings
+    try:
+        yield connect, OperationRepository(connect), settings
+    finally:
+        outcome = getattr(request.node, "test_report_call", None)
+        cleanup = os.environ.get("INCIDENT_AGENT_TEST_CLEAN_PASSED_DATABASES") == "1"
+        status = "retained"
+        if cleanup and outcome is not None and outcome.passed:
+            # Only the exact database created by THIS fixture. Never enumerate
+            # historical DBs, terminate sessions, or force-drop active databases.
+            assert name.startswith("incident_agent_test_" + stage + "_")
+            assert name != conninfo_to_dict(source)["dbname"]
+            try:
+                with psycopg.connect(source, autocommit=True, connect_timeout=5) as admin:
+                    admin.execute("SET lock_timeout = '5s'")
+                    admin.execute(sql.SQL("DROP DATABASE {}").format(sql.Identifier(name)))
+                status = "dropped_after_pass"
+            except psycopg.Error as error:
+                status = "retained_cleanup_failed"
+                warnings.warn(f"Test DB {name} retained: cleanup {type(error).__name__}", RuntimeWarning)
+        audit = os.environ.get("INCIDENT_AGENT_TEST_AUDIT_DIR")
+        if audit:
+            with (Path(audit) / "database-lifecycle.jsonl").open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps({"test": request.node.nodeid, "database": name, "status": status}) + "\n")
 
 
 def accept(repo):

@@ -90,3 +90,7 @@ ECS 首次复验为 351 passed / 1 failed：诊断测试将缺少 `get_round` �
 本补丁只做本地静态检查；ECS 动态测试、供应商实际 Token 降幅及真实故障诊断效果仍需验收，不将受控模型通过等同于真实模型通过。
 
 ECS 复验 363 passed / 2 failed 暴露同一恢复缺陷：压缩文本保留了嵌套字典原始顺序，JSONB 重排后检索指纹变化。`compact.evidence_text` 已在投影/截断前递归固定对象键顺序，保持数组、日志及显式字段优先级；保留真实 PostgreSQL 崩溃恢复测试，并扩展模型上下文一致性断言。指纹校验不绕过，无新增配置/迁移，沿用上述脚本复验；已运行旧代码的活动任务仍应先结束再升级。
+
+共享内存故障：ECS 确认 PostgreSQL `/dev/shm` 为 64 MiB、占用 96%，主机内存/磁盘仍充足。两份 Compose 将 `shm_size` 显式设为 256m；必须保留原数据卷重建 postgres，单纯 restart 不应用此配置。6B-3a 验收默认在用例调用阶段通过、fixture 退出时清理该 fixture 本次新建的唯一测试库，不枚举旧库、不强制断开连接；失败/跳过用例保留，清理失败也保留并告警。`database-lifecycle.jsonl` 记录处理结果；设置 `INCIDENT_AGENT_TEST_CLEAN_PASSED_DATABASES=0` 可保留全部。旧测试库不自动删除，扩容后另行盘点。无数据库迁移；重建数据库会有短暂服务中断。
+
+恢复命令：拉取后执行 `bash scripts/repair_postgres_shm.sh`。脚本读取现有 named volume 并强制复用，补齐 Compose 所需 UID/GID/kubeconfig，停止当前运行的 backend/worker、只重建 postgres、核对原卷及 256 MiB、验证 SQL，然后恢复应用并检查 readyz。失败时应用可能保持停止，应反馈错误；不会删除数据。成功后再执行 `bash scripts/accept_stage6b3a.sh`。本地只验证语法，实际重建与数据库清理由 ECS 验证。

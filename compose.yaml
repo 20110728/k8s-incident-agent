@@ -3,6 +3,7 @@ name: k8s-incident-agent
 services:
   postgres:
     image: pgvector/pgvector:0.8.6-pg16-bookworm
+    shm_size: 256m
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
