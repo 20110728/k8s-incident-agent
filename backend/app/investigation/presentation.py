@@ -34,6 +34,9 @@ def investigation_view(state):
         "current": item["evidence_id"] in active} for item, origin in rows[:64]]
     output = state.get("output") or {}
     return {"version": 1, "steps": steps, "observations": observations,
+        "validation_failures": [{"attempt": item.get("attempt"), "stage": text(item.get("stage"), 32),
+            "action": text(item.get("action"), 64), "detail": text(item.get("detail"), 1200)}
+            for item in output.get("validation_failures", [])[:2]],
         "omitted_observations": max(0, len(rows) - 64), "outcome": text(output.get("status"), 64),
         "stop_reason": text(output.get("stop_reason") or (output.get("decision") or {}).get("reason")),
         "question_count": len(state.get("asked_slots", [])), "answer_count": len(state.get("answers", []))}

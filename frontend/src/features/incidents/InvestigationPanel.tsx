@@ -25,7 +25,15 @@ export function InvestigationPanel({ value, evidenceIds }: { value?: Investigati
     <p>这里展示已保存的行动、简短依据和采样结果。没有记录的步骤不推断为已完成，结论与审批分别查看对应环节。</p>
     <p>追问 {value.question_count} 次 · 已回答 {value.answer_count} 次</p>
     {!value.steps.length && <p>尚无已保存的调查决定。</p>}
-    <ol className="investigation-steps">{value.steps.map(step => <li key={step.step}>
+    {!!value.validation_failures?.length && <div className="investigation-result"><h4>决定被拒绝的具体原因</h4>
+      <p>以下是未执行的模型决定，不能算作已完成的调查行动。</p>
+      {value.validation_failures.map((failure, i) => <p key={i} className="preserve-text">
+        第 {failure.attempt} 次尝试 · {failure.stage === 'parse' ? '输出解析' : failure.stage === 'schema' ? '字段结构' : '规则校验'}
+        {failure.action ? ` · ${actions[failure.action] ?? failure.action}` : ''}：{failure.detail}</p>)}
+    </div>}
+    {value.stop_reason === 'DECISION_VALIDATION_FAILED' && !value.validation_failures?.length &&
+      <p>这条旧记录没有保存具体校验原因，可先导出已保存的模型结果排查；刷新不会补回缺失信息。</p>}
+    {!!value.steps.length && <ol className="investigation-steps">{value.steps.map(step => <li key={step.step}>
       <h4>第 {step.step} 步 · {actions[step.action] ?? step.action}</h4>
       {step.missing_fact && <p>需要补齐：{step.missing_fact}</p>}
       {step.reason && <p>选择依据：{step.reason}</p>}
@@ -36,7 +44,7 @@ export function InvestigationPanel({ value, evidenceIds }: { value?: Investigati
         {result.error_code && <p>采样错误：{result.error_code}</p>}
         <Citations ids={result.evidence_ids} current={current} />
       </div>)}
-    </li>)}</ol>
+    </li>)}</ol>}
     {value.outcome && <p>调查决定：{actions[value.outcome] ?? value.outcome}。这不代表修复已执行或服务已恢复。</p>}
     {value.stop_reason && <p className="preserve-text">停止或交接原因：{stops[value.stop_reason] ?? value.stop_reason}
       {stops[value.stop_reason] && <>（<code>{value.stop_reason}</code>）</>}</p>}

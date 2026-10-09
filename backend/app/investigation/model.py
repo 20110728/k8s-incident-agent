@@ -3,6 +3,7 @@ import time
 from backend.app.investigation.context import SYSTEM, CALL_SECONDS, CALL_TOKENS, OUTPUT_LIMIT, encode, estimate, INPUT_LIMIT
 from backend.app.investigation.contracts import Decision
 from backend.app.investigation.records import digest, saved_result
+from backend.app.investigation.diagnostics import provider_diagnostics
 
 
 class InvestigationModel:
@@ -19,6 +20,7 @@ class InvestigationModel:
         parsed = response.get("parsed")
         return {"parsed": parsed.model_dump(mode="json") if isinstance(parsed, Decision) else parsed,
                 "parse_error": "STRUCTURED_OUTPUT_INVALID" if response.get("parsing_error") else None,
+                "diagnostics": provider_diagnostics(response),
                 "usage": getattr(response.get("raw"), "usage_metadata", None) or {}}
 
 
@@ -40,12 +42,14 @@ def call_model(model, budget, prompt, request_id, *, decision_key=None, terminal
         usage = {k: v for k, v in usage.items() if k in {"input_tokens", "output_tokens", "total_tokens"} and type(v) is int and v >= 0}
         actual = usage.get("total_tokens") or None
         result = {"parsed": response.get("parsed"), "parse_error": response.get("parse_error")}
+        if response.get("diagnostics"):
+            result["diagnostics"] = response["diagnostics"]
         # Normalize provider values into bounded serializable data. Do not store
         # arbitrary raw provider objects or another copy of the full prompt.
         if len(encode(result)) > 24000:
             result = {"parsed": None, "parse_error": "MODEL_RESULT_TOO_LARGE"}
-    except Exception:
-        result, usage, actual = {"error": "MODEL_REQUEST_FAILED"}, {}, None
+    except Exception as error:
+        result, usage, actual = {"error": "MODEL_REQUEST_FAILED", "diagnostics": {"error_type": type(error).__name__}}, {}, None
     budget.settle(ticket, time.monotonic() - start, tokens=actual, usage=usage or None,
                   status="failed_or_unknown" if result.get("error") else "completed", result=result)
     return result

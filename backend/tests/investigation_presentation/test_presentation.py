@@ -19,13 +19,15 @@ def test_projection_keeps_failed_resampling_and_old_citations_without_raw_payloa
         "evidence": [fresh], "history": [{"step": 1, "action": "collect", "reason": "Authorization: Bearer private-value",
             "missing_fact": "current logs", "evidence_ids": ["old"], "results": [{"tool": "pod_logs", "coverage": "unknown",
                 "error_code": "READ_FAILED", "evidence_ids": ["new"], "sampling": {"generation": 1, "query_key": "INTERNAL"}}]}],
-        "output": {"status": "handoff", "stop_reason": "DECISION_VALIDATION_FAILED"}, "prompt": "PRIVATE-PROMPT"}
+        "output": {"status": "handoff", "stop_reason": "DECISION_VALIDATION_FAILED", "validation_failures": [
+            {"attempt": 1, "stage": "policy", "action": "collect", "detail": "RESOURCE_NOT_IN_CONTEXT", "private": "INTERNAL"}]}, "prompt": "PRIVATE-PROMPT"}
     before = deepcopy(saved)
     view = investigation_view(saved)
     assert saved == before
     assert [item["current"] for item in view["observations"]] == [False, True]
     assert view["steps"][0]["results"][0]["generation"] == 1
     assert view["observations"][1]["error"] == "READ_FAILED"
+    assert view["validation_failures"][0]["detail"] == "RESOURCE_NOT_IN_CONTEXT"
     assert not any(secret in json.dumps(view) for secret in ("PRIVATE-LOG", "PRIVATE-PROMPT", "INTERNAL", "private-value"))
     assert investigation_view({"history": saved["history"]}) is None
 

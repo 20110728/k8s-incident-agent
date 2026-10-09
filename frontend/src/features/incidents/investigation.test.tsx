@@ -17,6 +17,16 @@ const view: InvestigationView = { version: 1, steps: [{ step: 1, action: 'collec
   omitted_observations: 0, outcome: 'handoff', stop_reason: 'MODEL_TOKEN_LIMIT', question_count: 1, answer_count: 1 }
 
 describe('6B-3a investigation presentation', () => {
+  it('shows rejected attempts without inventing executed actions or retroactive details', () => {
+    const failed = { ...view, steps: [], stop_reason: 'DECISION_VALIDATION_FAILED', validation_failures: [
+      { attempt: 1, stage: 'schema', action: null, detail: 'decision.collect.requests: missing' }] }
+    const html = renderToStaticMarkup(<InvestigationPanel value={failed} evidenceIds={[]} />)
+    expect(html).toContain('字段结构')
+    expect(html).toContain('decision.collect.requests: missing')
+    expect(html).toContain('未执行的模型决定')
+    const old = renderToStaticMarkup(<InvestigationPanel value={{ ...failed, validation_failures: [] }} evidenceIds={[]} />)
+    expect(old).toContain('旧记录没有保存具体校验原因')
+  })
   it('distinguishes old evidence and failed sampling, escapes prose, links only current citations', () => {
     const html = renderToStaticMarkup(<InvestigationPanel value={view} evidenceIds={['new']} />)
     expect(html).toContain('READ_FAILED')

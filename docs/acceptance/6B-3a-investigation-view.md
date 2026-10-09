@@ -31,3 +31,20 @@ bash scripts/deploy_stage6b3a.sh
 4. 若遇到 changes 追问：对象默认不勾选；确认对象后回答，或选择跳过。已无此追问则该项记未手测，脚本覆盖适配和边界，不为了展示强迫模型提问。
 
 本地通过 Python AST（249 文件）、TypeScript 6.0.3 的 TS/TSX 语法解析（34 文件）、两份 Bash 脚本语法及 Git 差异检查；未运行 pytest、前端测试或构建。完整 TypeScript 类型检查随 ECS 构建执行，实际浏览器样式/交互尚待反馈。真实模型结构化输出、补证改判质量及与固定流程的耗时/调用对照留给 6B-3b，本块不宣称已验证。
+
+## 校验失败排障补丁
+
+`diagnostics.py::record_validation` 在原预算行锁内按 request_id 保存拒绝阶段（解析/字段结构/策略）、尝试次数、动作及脱敏限长原因，同时保存当次允许引用的证据/资源编号用于导出。重放复用原记录，不追加模型调用、不放宽校验；成功纠错前的失败记录也保留在预算账本。图终止时将最后一步的拒绝摘要写入 output，页面直接展示；未通过的决定不计入已执行行动。
+
+`model.py` 额外保存供应商 finish_reason、解析错误类型；解析失败时保存最多 3000 字符的脱敏最终输出片段，不保存隐藏推理、完整 prompt 或认证头。旧记录未保存的内容无法补回，页面明确提示。请求异常仅保存异常类名，不输出可能包含凭证的异常全文。
+
+只读导出（项目目录、`.venv` 已激活，不必重启或重跑旧事件）：
+
+```bash
+python -m scripts.export_investigation_debug --incident-id <事件ID>
+# 指定历史轮次时再加：--run-id <runID>
+```
+
+命令在数据库只读、可重复读事务中读取该事件最新 diagnosis run（或指定 run）的现存账本；不恢复 graph、不调用模型/集群。生成 `evals/results/investigation-debug/<时间>-<随机ID>.json`，含所选 run ID、解析结果、供应商诊断、校验记录及引用范围，不导出完整采样日志/数据库连接串。发送前仍可检查模型自由文本是否含需自行隐藏的业务信息。旧事件导出后先分析文件，勿为补日志反复请求模型。
+
+补丁沿用 `bash scripts/accept_stage6b3a.sh` 验收，包含失败原因持久化/缓存重放、脱敏、旧记录导出及真实 PostgreSQL CLI 测试；通过后沿用 `bash scripts/deploy_stage6b3a.sh`。无新配置、依赖或迁移；根本触发原因须结合实际导出文件确认。

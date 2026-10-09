@@ -216,7 +216,7 @@ def budget_view(repo, incident_id, run_id):
     # Keep them in storage, not in the public budget endpoint.
     from backend.app.tools.investigation import redact_output
     public_fields = {"kind", "reserved_seconds", "extra", "reserved_tokens", "status", "metadata",
-                     "request_id", "elapsed_seconds", "usage", "charged_tokens"}
+                     "request_id", "elapsed_seconds", "usage", "charged_tokens", "validation"}
     calls = json.loads(redact_output([{k: v for k, v in call.items() if k in public_fields} for call in data["calls"].values()]))
     models = [call for call in calls if call["kind"] in {"model", "investigation_model"}]
     reported = [call for call in models if type((call.get("usage") or {}).get("total_tokens")) is int

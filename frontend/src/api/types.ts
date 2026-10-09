@@ -460,6 +460,7 @@ export interface RunBudget {
 }
 
 export interface InvestigationView {
+  validation_failures?: { attempt: number; stage: string; action: string | null; detail: string }[]
   version: number
   steps: { step: number; action: string; reason: string | null; missing_fact: string | null; evidence_ids: string[];
     results: { tool: string; coverage: string; error_code: string | null; evidence_ids: string[]; generation: number }[] }[]

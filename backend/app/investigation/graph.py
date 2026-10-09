@@ -20,6 +20,7 @@ from backend.app.investigation.dialogue import VERSION, question_for, accept_ans
 from backend.app.investigation.resampling import authorize_sample, FRESHNESS_SECONDS
 from backend.app.agent.state import IncidentState
 from backend.app.services.round_context import INVESTIGATION_WORKFLOW
+from backend.app.investigation.diagnostics import record_validation
 
 
 class InvestigationState(IncidentState, total=False):
@@ -123,6 +124,7 @@ def build_investigation_graph(budget, toolbox, model, *, checkpointer=None, inte
         request_id = f"{prefix}:{'final' if terminal else 'decision'}:{step}"
         current = current_state(state["baseline"], state["observations"])
         feedback = None
+        failures = []
         try:
             for attempt in range(2):
                 human = {"answers": state.get("answers", []), "asked_slots": state.get("asked_slots", []),
@@ -152,8 +154,11 @@ def build_investigation_graph(budget, toolbox, model, *, checkpointer=None, inte
                 except (ValidationError, ValueError) as error:
                     # Permission/resource boundaries cannot be negotiated by retry.
                     feedback = str(error)[:1800]
+                    failures.append(record_validation(budget, request_id + (":correction" if attempt else ""),
+                        step=step, attempt=attempt, error=error, response=response, prompt=prompt))
                     if attempt or "RESOURCE_" in feedback or "TOOL_RESOURCE" in feedback or not correction(budget, request_id):
-                        return {"phase": "finished", "output": handoff(state, "DECISION_VALIDATION_FAILED")}
+                        return {"phase": "finished", "output": {**handoff(state, "DECISION_VALIDATION_FAILED"),
+                                                                  "validation_failures": failures}}
             record = {"step": step, "action": decision["action"], "reason": decision.get("reason"),
                       "missing_fact": decision.get("missing_fact"), "evidence_ids": decision.get("evidence_ids", [])}
             if decision["action"] == "collect":
