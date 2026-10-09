@@ -29,6 +29,9 @@ def view(budget):
 
 
 def test_crash_reservation_and_question_survive_reclaim(storage, budget):
+    # Existing v1 rows keep their original ceiling after deployment.
+    with budget.edit() as data:
+        data["policy"].update(version="investigation-budget-v1", total_tokens=40000)
     ticket = budget.reserve("model", 60, tokens=14000)
     budget.decision("question:1")
     expire(storage[0], budget.lease["run_id"])
@@ -51,9 +54,9 @@ def test_simultaneous_reservations_cannot_overspend(budget):
             return True
         except BudgetExceeded:
             return False
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        assert sum(pool.map(reserve, range(4))) == 2
-    assert view(budget)["used"]["tokens"] == 28000
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        assert sum(pool.map(reserve, range(6))) == 4
+    assert view(budget)["used"]["tokens"] == 56000
 
 
 def test_tools_and_decisions_stop_but_last_collection_can_be_summarized(budget):
@@ -154,7 +157,7 @@ def test_unknown_cost_and_saved_completion_can_publish_at_exhaustion(storage):
     repo.accept_interaction(incident, body("explain"), None, refs)
     lease = repo.claim("first", 60)
     budget = RunBudget(repo, lease)
-    budget.reserve("model", 300, tokens=40000)
+    budget.reserve("model", 300, tokens=60000)
     from backend.tests.interactions.test_interactions import FakeModel
     model = FakeModel()
     explanation, _ = model.call("explain", "why", refs)
@@ -183,7 +186,7 @@ def test_uncertain_write_is_reconciled_after_budget_exhaustion(operation_case):
     with pytest.raises(OutcomeUnknown):
         executor.execute(state)
     budget = RunBudget(repo, lease)
-    budget.reserve("earlier_activity", 300, tokens=40000)
+    budget.reserve("earlier_activity", 300, tokens=60000)
     with bind_budget(budget):
         executor.reconcile(repo.operation(lease["run_id"]))
     assert len(kube.calls) == 1

@@ -43,7 +43,7 @@ def test_projection_bounds_old_records_and_does_not_invent_completion():
 
 def test_budget_counts_unknown_usage_without_exposing_replay_results():
     payload = {"policy": {}, "seconds": 1, "extra_seconds": 0, "tokens": 9520, "decisions": [], "tools": [], "exhausted": None,
-        "calls": {"one": {"kind": "investigation_model", "usage": {"total_tokens": 20}, "result": {"prompt": "PRIVATE"}},
+        "calls": {"one": {"kind": "investigation_model", "usage": {"total_tokens": 20}, "charged_tokens": 20, "result": {"prompt": "PRIVATE"}},
                   "two": {"kind": "investigation_model", "status": "started_or_interrupted", "reserved_tokens": 9500,
                           "fingerprint": "INTERNAL", "future_private_field": "PRIVATE"},
                   "three": {"kind": "embedding", "usage": {"total_tokens": 9}}}}
@@ -52,6 +52,8 @@ def test_budget_counts_unknown_usage_without_exposing_replay_results():
     view = budget_view(repo, "incident", "run")
     assert view["generation"] == {"attempts": 2, "reported_tokens": 20, "unreported_attempts": 1}
     assert view["used"]["tokens"] == 9520 and payload == before
+    assert view["accounting"]["reported_charge"] == 20
+    assert view["accounting"]["estimated_or_reserved_charge"] == 9500
     assert "PRIVATE" not in json.dumps(view) and "INTERNAL" not in json.dumps(view)
 
 

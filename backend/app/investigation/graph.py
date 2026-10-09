@@ -12,7 +12,7 @@ from backend.app.agent.remediation_policy import get_allowed_remediation_actions
 from backend.app.investigation.context import build_context, CALL_TOKENS, CALL_SECONDS
 from backend.app.investigation.contracts import Decision
 from backend.app.investigation.evidence import current_state, adapt
-from backend.app.investigation.model import call_model
+from backend.app.investigation.model import call_model, terminal_mode
 from backend.app.investigation.records import bind_baseline, correction, IncompleteRequest, digest
 from backend.app.runtime.budget import BudgetExceeded
 from backend.app.persistence.leases import LeaseLost
@@ -140,13 +140,15 @@ def build_investigation_graph(budget, toolbox, model, *, checkpointer=None, inte
         failures = []
         try:
             for attempt in range(2):
+                attempt_id = request_id + (":correction" if attempt else "")
+                terminal = terminal_mode(budget, attempt_id, terminal)
                 human = {"answers": state.get("answers", []), "asked_slots": state.get("asked_slots", []),
                          "freshness_seconds": FRESHNESS_SECONDS} if interactive else None
                 prompt = build_context(current, toolbox.manifest(), state["history"], terminal_only=terminal, feedback=feedback, dialogue=human)
                 if production:
                     prompt["production"] = True
                     prompt["write_limit"] = "After a human wait do not propose a write plan; start a new full investigation round first."
-                response = call_model(model, budget, prompt, request_id + (":correction" if attempt else ""),
+                response = call_model(model, budget, prompt, attempt_id,
                                       decision_key=None if terminal else request_id, terminal=terminal)
                 if response.get("error"):
                     return {"phase": "finished", "output": handoff(state, response["error"])}

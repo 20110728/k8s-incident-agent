@@ -449,6 +449,7 @@ export interface Operation {
   error_code: string | null
 }
 export interface RunBudget {
+  accounting?: { reported_charge: number; estimated_or_reserved_charge: number; embedding_charge: number; remaining: number }
   generation?: { attempts: number; reported_tokens: number; unreported_attempts: number }
   available: boolean
   run_id: string

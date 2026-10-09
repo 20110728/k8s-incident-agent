@@ -10,8 +10,8 @@ from uuid import uuid4
 from psycopg.types.json import Jsonb
 
 CURRENT = ContextVar("run_budget", default=None)
-POLICY = {"version": "investigation-budget-v1", "active_seconds": 300, "extra_seconds": 90,
-          "decisions": 3, "tools": 6, "input_tokens": 12000, "output_tokens": 2000, "total_tokens": 40000,
+POLICY = {"version": "investigation-budget-v2", "active_seconds": 300, "extra_seconds": 90,
+          "decisions": 3, "tools": 6, "input_tokens": 12000, "output_tokens": 2000, "total_tokens": 60000,
           "write_reserve_seconds": 150}
 
 
@@ -221,7 +221,15 @@ def budget_view(repo, incident_id, run_id):
     models = [call for call in calls if call["kind"] in {"model", "investigation_model"}]
     reported = [call for call in models if type((call.get("usage") or {}).get("total_tokens")) is int
                 and call["usage"]["total_tokens"] > 0]
+    def charged(call):
+        return call.get("charged_tokens", call.get("reserved_tokens", 0)) or 0
+    confirmed = [call for call in calls if type((call.get("usage") or {}).get("total_tokens")) is int
+                 and call["usage"]["total_tokens"] > 0]
+    known_charge = sum(charged(call) for call in confirmed)
     return {"available": True, "run_id": run_id, "policy": policy,
+        "accounting": {"reported_charge": known_charge, "estimated_or_reserved_charge": max(0, data["tokens"] - known_charge),
+                       "embedding_charge": sum(charged(call) for call in calls if call["kind"] == "embedding"),
+                       "remaining": max(0, policy.get("total_tokens", 0) - data["tokens"])},
         "generation": {"attempts": len(models), "reported_tokens": sum(call["usage"]["total_tokens"] for call in reported),
             "unreported_attempts": len(models) - len(reported)},
         "used": {"active_seconds": data["seconds"], "extra_seconds": data["extra_seconds"], "tokens": data["tokens"],

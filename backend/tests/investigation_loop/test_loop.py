@@ -332,6 +332,8 @@ def test_target_change_stops_before_second_request_in_batch(case):
 
 def test_missing_usage_retains_reservations_and_protects_final_headroom(case):
     budget, box, _ = case
+    with budget.edit() as data:
+        data["policy"].update(version="investigation-budget-v1", total_tokens=40000)
     prompt = build_context(box.state, box.manifest(), [])
     model = Mock()
     model.invoke.return_value = {"parsed": {"decision": stop(prompt)}, "usage": {}}

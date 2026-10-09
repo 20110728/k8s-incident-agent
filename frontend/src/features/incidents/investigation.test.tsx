@@ -68,9 +68,13 @@ describe('6B-3a investigation presentation', () => {
     const html = renderToStaticMarkup(<BudgetDetails value={{ available: true, run_id: 'r',
       policy: { active_seconds: 300, extra_seconds: 90, total_tokens: 40000, tools: 6, decisions: 3 },
       used: { active_seconds: 3, extra_seconds: 1, tokens: 9600, tools: 1, decisions: 1 },
-      generation: { attempts: 2, reported_tokens: 100, unreported_attempts: 1 } }} />)
+      generation: { attempts: 2, reported_tokens: 100, unreported_attempts: 1 },
+      accounting: { reported_charge: 100, estimated_or_reserved_charge: 9500, embedding_charge: 1000, remaining: 30400 } }} />)
     expect(html).toContain('生成调用尝试 2 次')
     expect(html).toContain('未报告用量 1 次')
     expect(html).toContain('不代表精确费用')
+    expect(html).toContain('估算或未结算预留 9500')
+    expect(html).toContain('剩余预算 30400')
+    expect(html).toContain('不重复相加')
   })
 })

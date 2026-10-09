@@ -24,6 +24,24 @@ class InvestigationModel:
                 "usage": getattr(response.get("raw"), "usage_metadata", None) or {}}
 
 
+def terminal_mode(budget, request_id, forced=False):
+    """Persist routing before invocation so replay never changes a paid prompt."""
+    with budget.edit() as data:
+        modes = data.setdefault("investigation_model_modes", {})
+        if request_id in modes:
+            return modes[request_id]
+        previous = data.get("requests", {}).get(request_id)
+        if previous:
+            mode = data["calls"][previous].get("metadata", {}).get("purpose") == "terminal"
+        else:
+            remaining = data["policy"]["total_tokens"] - data["tokens"]
+            seconds = data["policy"]["active_seconds"] - data["seconds"]
+            attempts = sum(c["kind"] == "investigation_model" for c in data["calls"].values())
+            mode = forced or remaining < 2 * CALL_TOKENS or seconds < 2 * CALL_SECONDS or attempts >= 4
+        modes[request_id] = mode
+        return mode
+
+
 def call_model(model, budget, prompt, request_id, *, decision_key=None, terminal=False):
     if estimate(prompt) > INPUT_LIMIT:
         budget.deny("INVESTIGATION_CONTEXT_TOO_LARGE")

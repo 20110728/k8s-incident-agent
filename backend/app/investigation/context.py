@@ -4,6 +4,7 @@ from math import ceil
 from backend.app.agent.diagnosis_policy import diagnostic_facts
 from backend.app.investigation.contracts import Decision, TOOL_GUIDE
 from backend.app.tools.investigation import redact_output
+from backend.app.investigation.compact import compact_history, evidence_text
 
 INPUT_LIMIT = 8000
 OUTPUT_LIMIT = 1500
@@ -15,6 +16,7 @@ Choose collect, conclude, stop, ask_user or propose_plan. When production=true, 
 When interactive=true ask only for human information using slot onset/changes/symptom/impact; never repeat an asked slot, never ask users to bypass permissions. User replies remain unverified claims, not cluster facts.
 Repeat collection requires resample_reason user_change or stale and a server check; stale means the per-tool freshness time actually elapsed, not your subjective confidence. Changed-resource confirmation comes only from accepted human input. previous logs cannot be resampled.
 For collect state the missing fact and expected usefulness. Choose 1 tool, or at most 2 independent tools; never assume results before reading them.
+Keep reason and missing_fact concise (prefer at most 120 Chinese characters each); cite evidence IDs instead of repeating all observed facts.
 Use only provided resource_ref and evidence IDs. Tools may be partial or fail: neither proves health. Current logs may suggest a dependency cause but cannot confirm the downstream root cause. Previous logs are historical.
 Do not repeat a query because other evidence changed or request a different line count to bypass duplication. Stop if no effective allowed alternative remains.
 History requests/results describe completed attempts. Read their current evidence excerpts before selecting another tool; an omitted or truncated excerpt is not permission to repeat the same query.
@@ -35,8 +37,8 @@ def build_context(state, manifest, history, *, terminal_only=False, feedback=Non
     facts = diagnostic_facts(state)
     prompt = {"target": state["request"], "policy_facts": facts, "terminal_only": terminal_only,
         "tool_guide": TOOL_GUIDE, "resources": [], "evidence": [], "runbooks": [],
-        "available_evidence_ids": [], "available_runbook_ids": [], "history": history[-3:],
-        "feedback": feedback, "omitted_evidence_ids": [], "context_coverage": "bounded excerpts, not full observations"}
+        "available_evidence_ids": [], "available_runbook_ids": [], "history": compact_history(history),
+        "feedback": feedback, "omitted_evidence_ids": [], "context_coverage": "Selected fields and bounded excerpts, not full observations; omitted input never authorizes recollection."}
     if dialogue is not None:
         prompt.update(interactive=True, human_context=dialogue,
                       health_limit="After a human wait, old snapshots alone cannot establish current health; conclude unknown or start a new full baseline if needed.")
@@ -53,6 +55,7 @@ def build_context(state, manifest, history, *, terminal_only=False, feedback=Non
     required = set(facts["business_evidence_ids"] + facts["configuration_evidence_ids"] + facts["resource_evidence_ids"])
     latest = next((h for h in reversed(history) if h.get("results")), {})
     latest_ids = {eid for r in latest.get("results", []) for eid in r.get("evidence_ids", [])}
+    protected = required | {e["evidence_id"] for e in state.get("evidence", []) if e.get("request_id")}
     evidence = sorted(state.get("evidence", []), key=lambda e: (
         e["evidence_id"] not in latest_ids, not bool(e.get("request_id")), e["evidence_id"] not in required))
     # Count the omission inventory from the start; appending it after packing
@@ -61,15 +64,12 @@ def build_context(state, manifest, history, *, terminal_only=False, feedback=Non
     prompt["omitted_evidence_ids"] = [e["evidence_id"] for e in evidence]
     expansions = []
     for item in evidence:
-        data = item.get("data", {})
-        if item.get("resource_type") == "PodLogs" and isinstance(data, dict):
-            data = {"content": data.get("content", ""), **{k: v for k, v in data.items() if k != "content"}}
-        text = redact_output(data)
-        size = 1800 if item["evidence_id"] in required else 2500
+        text = evidence_text(item)
+        size = 900 if item.get("request_id") else 600
         block = {"evidence_id": item["evidence_id"], "resource_type": item["resource_type"],
             "resource_name": item["resource_name"], "collected_at": item.get("collected_at"),
             "error": item.get("error"), "coverage": item.get("coverage", "baseline_snapshot"),
-            "excerpt": text[:600], "excerpt_truncated": len(text) > 600 or item.get("truncated", False)}
+            "excerpt": text[:240], "excerpt_truncated": True, "projection": "selected_fields_or_grouped_logs"}
         prompt["evidence"].append(block)
         prompt["available_evidence_ids"].append(item["evidence_id"])
         prompt["omitted_evidence_ids"].remove(item["evidence_id"])
@@ -78,28 +78,24 @@ def build_context(state, manifest, history, *, terminal_only=False, feedback=Non
             prompt["available_evidence_ids"].pop()
             prompt["omitted_evidence_ids"].append(item["evidence_id"])
         else:
-            expansions.append((block, text, size, item.get("truncated", False)))
+            expansions.append((block, text, size))
     if latest_ids.intersection(e["evidence_id"] for e in evidence) - set(prompt["available_evidence_ids"]):
         # Do not pay for another decision that cannot see the last collection.
         raise ValueError("LATEST_TOOL_EVIDENCE_NOT_IN_CONTEXT")
+    if protected - set(prompt["available_evidence_ids"]):
+        raise ValueError("REQUIRED_EVIDENCE_NOT_IN_CONTEXT")
     for resource in manifest["resources"]:
         prompt["resources"].append(resource)
         if estimate(prompt) > INPUT_LIMIT - 650:
             prompt["resources"].pop()
             break
-    for block, text, size, truncated in expansions:
-        low, high = len(block["excerpt"]), min(size, len(text))
-        while low < high:
-            mid = (low + high + 1) // 2
-            block["excerpt"] = text[:mid]
-            if estimate(prompt) <= INPUT_LIMIT - 650:
-                low = mid
-            else:
-                high = mid - 1
-        block["excerpt"] = text[:low]
-        block["excerpt_truncated"] = len(text) > low or truncated
-    for item in state.get("retrieved_runbooks", [])[:3]:
-        block = {"runbook_id": item["runbook_id"], "excerpt": redact_output(item.get("content", ""))[:900]}
+    for block, text, size in expansions:
+        short = block["excerpt"]
+        block["excerpt"] = text[:size]
+        if estimate(prompt) > INPUT_LIMIT - 650:
+            block["excerpt"] = short
+    for item in state.get("retrieved_runbooks", [])[:2]:
+        block = {"runbook_id": item["runbook_id"], "excerpt": redact_output(item.get("content", ""))[:350]}
         prompt["runbooks"].append(block)
         prompt["available_runbook_ids"].append(item["runbook_id"])
         if estimate(prompt) > INPUT_LIMIT - 200:

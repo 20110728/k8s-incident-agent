@@ -50,7 +50,7 @@ def prepare_baseline(budget, *, collector=None, retriever=None):
                 "evidence": normalize_evidence(incident_id=budget.lease["incident_id"], bundle=bundle)}
     baseline = _initial_read(budget, "investigation_baseline", 45, request, collect)
     # The query builder sorts evidence keys; replaying JSONB cannot change it.
-    query = build_retrieval_query(baseline)
+    query = build_retrieval_query(baseline, compact=True)
     baseline["retrieved_runbooks"] = _initial_read(budget, "investigation_retrieval", 30, query,
         lambda: (retriever or build_runbook_retriever()).retrieve(query))
     with budget.edit() as data:
