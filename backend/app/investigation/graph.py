@@ -20,7 +20,8 @@ from backend.app.investigation.dialogue import VERSION, question_for, accept_ans
 from backend.app.investigation.resampling import authorize_sample, FRESHNESS_SECONDS
 from backend.app.agent.state import IncidentState
 from backend.app.services.round_context import INVESTIGATION_WORKFLOW
-from backend.app.investigation.diagnostics import record_validation
+from backend.app.investigation.diagnostics import record_validation, error_detail
+from backend.app.tools.investigation_requests import ToolBoundaryError, ToolRequest
 
 
 class InvestigationState(IncidentState, total=False):
@@ -48,6 +49,13 @@ def handoff(state, code):
 
 
 def validate_decision(value, prompt, current, toolbox, terminal):
+    raw = value.get("decision") if isinstance(value, dict) else None
+    if isinstance(raw, dict) and raw.get("action") == "collect" and isinstance(raw.get("requests"), list):
+        visible = {r["resource_ref"] for r in prompt["resources"]}
+        for request in raw["requests"]:
+            toolbox.validate_boundary(request)
+            if isinstance(request, dict) and isinstance(request.get("resource_ref"), str) and request["resource_ref"] not in visible:
+                raise ToolBoundaryError("RESOURCE_NOT_IN_CONTEXT")
     decision = Decision.model_validate(value).decision
     if terminal and decision.action not in {"conclude", "stop"}:
         raise ValueError("TERMINAL_ONLY")
@@ -60,7 +68,7 @@ def validate_decision(value, prompt, current, toolbox, terminal):
         keys = []
         for request in decision.requests:
             if request.resource_ref not in visible:
-                raise ValueError("RESOURCE_NOT_IN_CONTEXT")
+                raise ToolBoundaryError("RESOURCE_NOT_IN_CONTEXT")
             toolbox.validate_request(request.model_dump())
             keys.append(toolbox.query_key(request.model_dump()))
         if len(keys) != len(set(keys)):
@@ -85,7 +93,12 @@ def validate_decision(value, prompt, current, toolbox, terminal):
             raise ValueError("FAILED_OBSERVATION_CANNOT_PROVE_HEALTH")
         if decision.action == "propose_plan" and decision.candidate not in get_allowed_remediation_actions({**current, "diagnosis": diagnosis.model_dump()}):
             raise ValueError("REPAIR_CANDIDATE_NOT_ALLOWED")
-    return decision.model_dump(mode="json")
+    result = decision.model_dump(mode="json")
+    if decision.action == "collect":
+        # Preserve the old execution payload used by graph checkpoints, query
+        # keys and durable tool-request fingerprints.
+        result["requests"] = [ToolRequest.model_validate(r).model_dump() for r in result["requests"]]
+    return result
 
 
 def build_investigation_graph(budget, toolbox, model, *, checkpointer=None, interactive=False,
@@ -139,7 +152,11 @@ def build_investigation_graph(budget, toolbox, model, *, checkpointer=None, inte
                     return {"phase": "finished", "output": handoff(state, response["error"])}
                 try:
                     if response.get("parse_error"):
-                        raise ValueError(response["parse_error"])
+                        diagnostics = response.get("diagnostics") or {}
+                        if diagnostics.get("tool_boundary_invalid"):
+                            raise ToolBoundaryError("TOOL_OR_RESOURCE_SCHEMA_NOT_ALLOWED")
+                        detail = diagnostics.get("parser_detail")
+                        raise ValueError(response["parse_error"] + (": " + detail if detail else ""))
                     decision = validate_decision(response.get("parsed"), prompt, current, toolbox, terminal)
                     if interactive and decision["action"] == "ask_user":
                         question_for(state, decision, budget, toolbox.manifest(), current["evidence"])
@@ -153,10 +170,10 @@ def build_investigation_graph(budget, toolbox, model, *, checkpointer=None, inte
                     break
                 except (ValidationError, ValueError) as error:
                     # Permission/resource boundaries cannot be negotiated by retry.
-                    feedback = str(error)[:1800]
+                    feedback = error_detail(error)
                     failures.append(record_validation(budget, request_id + (":correction" if attempt else ""),
                         step=step, attempt=attempt, error=error, response=response, prompt=prompt))
-                    if attempt or "RESOURCE_" in feedback or "TOOL_RESOURCE" in feedback or not correction(budget, request_id):
+                    if attempt or isinstance(error, ToolBoundaryError) or not correction(budget, request_id):
                         return {"phase": "finished", "output": {**handoff(state, "DECISION_VALIDATION_FAILED"),
                                                                   "validation_failures": failures}}
             record = {"step": step, "action": decision["action"], "reason": decision.get("reason"),

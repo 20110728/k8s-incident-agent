@@ -42,7 +42,21 @@ def provider_diagnostics(response):
     result = {"finish_reason": safe_text(metadata.get("finish_reason"), 80) if metadata.get("finish_reason") else None}
     if error:
         result["parser_error_type"] = type(error).__name__
-        result["parser_detail"] = error_detail(error) if isinstance(error, ValidationError) else "STRUCTURED_OUTPUT_PARSE_FAILED"
+        # Provider adapters can wrap Pydantic errors. Only inspect exception
+        # objects, never parse arbitrary exception text containing model output.
+        validation = error
+        seen = set()
+        for _ in range(5):
+            if isinstance(validation, ValidationError) or validation is None or id(validation) in seen:
+                break
+            seen.add(id(validation))
+            validation = validation.__cause__ or validation.__context__
+        result["parser_detail"] = error_detail(validation) if isinstance(validation, ValidationError) else "STRUCTURED_OUTPUT_PARSE_FAILED"
+        if isinstance(validation, ValidationError):
+            errors = validation.errors(include_input=False, include_context=False, include_url=False)
+            result["tool_boundary_invalid"] = any("requests" in item["loc"] and (
+                item["type"] == "union_tag_invalid" or
+                ("resource_ref" in item["loc"] and item["type"] == "string_pattern_mismatch")) for item in errors)
         # Only final content, never reasoning_content/additional_kwargs/full prompts.
         content = getattr(raw, "content", None)
         if isinstance(content, str):

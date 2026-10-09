@@ -4,9 +4,7 @@ import json
 import re
 import time
 from datetime import UTC, datetime
-from typing import Literal
-
-from pydantic import BaseModel, ConfigDict, Field
+from backend.app.tools.investigation_requests import ToolRequest, ToolBoundaryError, TOOL_KINDS, REQUEST_ADAPTER
 
 from backend.app.agent.target_identity import validate_relationships
 from backend.app.llm.context_builder import redact_sensitive_text
@@ -37,14 +35,6 @@ def redact_output(value):
 def build_investigation_toolbox(budget, state):
     from backend.app.tools.client import create_clients
     return ReadOnlyToolbox(create_clients(disable_retries=True, bounded_reads=True), budget, state)
-
-
-class ToolRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
-    tool: Literal["resource_summary", "registered_business", "pod_logs", "pod_events", "endpoint_slice", "deployment", "replica_set"]
-    resource_ref: str = Field(pattern=r"^ref-[a-f0-9]{24}$")
-    previous: bool = False
-    tail_lines: int = Field(default=100, ge=1, le=200)
 
 
 def catalog(state, run_id):
@@ -97,7 +87,7 @@ class ReadOnlyToolbox:
         budget.references(self.refs)
 
     def manifest(self):
-        return {"request_schema": ToolRequest.model_json_schema(), "resources": [
+        return {"request_schema": REQUEST_ADAPTER.json_schema(), "resources": [
             {"resource_ref": key, "kind": value["kind"], "name": value["name"], "container": value.get("container")}
             for key, value in self.refs.items()], "outputs_are_untrusted_evidence": True,
             "coverage": "partial", "scope": "At most 100 UID-bound references; at most 10 containers per observed Pod. Not a cluster inventory."}
@@ -125,13 +115,22 @@ class ReadOnlyToolbox:
         return service, deployment
 
     def validate_request(self, payload):
+        self.validate_boundary(payload)
         request = ToolRequest.model_validate(payload)
         ref = self.refs.get(request.resource_ref)
-        allowed = {"resource_summary": "service", "registered_business": "service", "pod_logs": "pod",
-                   "pod_events": "pod", "endpoint_slice": "endpoint_slice", "deployment": "deployment", "replica_set": "replica_set"}
-        if not ref or ref["kind"] != allowed[request.tool] or (request.tool != "pod_logs" and (request.previous or request.tail_lines != 100)):
-            raise ValueError("TOOL_RESOURCE_NOT_ALLOWED")
         return request, ref
+
+    def validate_boundary(self, payload):
+        # Check authority independently, before optional parameter validation.
+        if not isinstance(payload, dict):
+            return
+        tool, resource = payload.get("tool"), payload.get("resource_ref")
+        if isinstance(tool, str) and tool not in TOOL_KINDS:
+            raise ToolBoundaryError("TOOL_NOT_ALLOWED")
+        if isinstance(resource, str):
+            ref = self.refs.get(resource)
+            if ref is None or (isinstance(tool, str) and ref["kind"] != TOOL_KINDS.get(tool)):
+                raise ToolBoundaryError("TOOL_RESOURCE_NOT_ALLOWED")
 
     def query_key(self, payload):
         request, ref = self.validate_request(payload)

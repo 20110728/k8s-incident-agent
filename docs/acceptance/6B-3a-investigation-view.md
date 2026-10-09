@@ -48,3 +48,18 @@ python -m scripts.export_investigation_debug --incident-id <事件ID>
 命令在数据库只读、可重复读事务中读取该事件最新 diagnosis run（或指定 run）的现存账本；不恢复 graph、不调用模型/集群。生成 `evals/results/investigation-debug/<时间>-<随机ID>.json`，含所选 run ID、解析结果、供应商诊断、校验记录及引用范围，不导出完整采样日志/数据库连接串。发送前仍可检查模型自由文本是否含需自行隐藏的业务信息。旧事件导出后先分析文件，勿为补日志反复请求模型。
 
 补丁沿用 `bash scripts/accept_stage6b3a.sh` 验收，包含失败原因持久化/缓存重放、脱敏、旧记录导出及真实 PostgreSQL CLI 测试；通过后沿用 `bash scripts/deploy_stage6b3a.sh`。无新配置、依赖或迁移；根本触发原因须结合实际导出文件确认。
+
+## 工具参数契约修复
+
+旧事件 `d523afa6-f382-463f-82ec-0438bd26a92d` 已保存的 `pod_events(tail_lines=50)` 暴露了契约矛盾：通用 schema 允许行数，但执行层将非日志工具的非默认参数归入权限错误，导致直接交接。旧记录缺少校验异常，不能断言这是当时最先触发的检查。
+
+- `tools/investigation_requests.py` 统一模型与执行层参数定义：日志分支允许 `previous/tail_lines`；其他工具分支仅允许工具名和资源编号。只有旧的精确默认值 `false/100` 可兼容，非默认值、隐式类型转换和未知字段均不忽略。执行层继续生成原字段顺序和默认值，保持工具请求指纹、去重键与缓存兼容。
+- `graph.validate_decision` 对已解析采集批次先检查资源/工具边界，再做完整字段和证据校验，整批通过才允许采集。明确的 `ToolBoundaryError` 立即停止，不再依靠错误字符串包含 `RESOURCE_` 判断权限；普通参数错误复用全轮共享的一次纠错，不提高调用预算。结构化解析失败若能取得 Pydantic 错误，则提供限长字段路径；识别出的非法工具标签/资源编号格式立即停止。无法解析的响应不执行工具，最多使用原有纠错额度。
+- `diagnostics.provider_diagnostics` 从有限层异常链提取字段错误，不解析异常全文；页面与导出沿用上一补丁。工具运行中的身份变化、预算限制及部分失败处理不变，已成功结果保留，未完成项不能算成功。
+- 升级边界：已完成旧事件不重跑；旧工具结果可按原请求 ID 复用。模型上下文/schema 已变化，升级前应结束正在调查的任务；若旧的未完成模型节点重放时上下文指纹不同，仍以 `REQUEST_INPUT_CHANGED` 保守停止，不能跳过指纹检查或自动重付费调用。需要时明确创建新调查轮次。
+
+新增 `investigation_loop/test_request_contracts.py` 覆盖本次错误的纠正/再次失败、整批检查、权限拒绝、正常路径无额外调用、部分成功保留、旧工具指纹缓存、模型上下文变化保守停止，以及真实结构化解析错误的适配路径（受控供应商，真实隔离 PostgreSQL）。本地只做静态检查，动态结果由 ECS 验收确认。
+
+本补丁本地检查：`backend/` 与 `scripts/` 下 251 个 Python 文件 AST 解析、Git 差异检查通过；新增 11 个测试函数（含参数化用例），未本地运行 pytest、模型调用或前端构建。
+
+ECS 顺序：`git pull --ff-only origin feature/baseline-contracts` → `bash scripts/accept_stage6b3a.sh`（预期 `PASS: 6B-3a ECS acceptance.`）→ `bash scripts/deploy_stage6b3a.sh`。无新增配置、依赖或迁移；部署更新 backend、worker、frontend。最后用新事件复验浏览器调查，真实模型可选择不同有效路径，不要求必定调用日志和事件；遇到失败导出该新事件，勿重跑旧事件补记录。
