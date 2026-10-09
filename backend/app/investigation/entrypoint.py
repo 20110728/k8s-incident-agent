@@ -1,4 +1,4 @@
-"""Internal 6B-1 runner assembly; deliberately not registered in HTTP/worker routing."""
+"""Durable baseline shared by investigation workflows, plus the internal read-only runner."""
 from copy import deepcopy
 from threading import Event
 import time
@@ -45,6 +45,7 @@ def prepare_baseline(budget, *, collector=None, retriever=None):
         source = collector or build_kubernetes_collector(bounded_reads=True, include_details=False)
         bundle = source.collect(request["namespace"], request["service_name"])
         return {"incident_id": budget.lease["incident_id"], "request": request,
+                "round_context": budget.lease.get("context_snapshot") or {},
                 "service_profile": bundle.get("service_profile"),
                 "evidence": normalize_evidence(incident_id=budget.lease["incident_id"], bundle=bundle)}
     baseline = _initial_read(budget, "investigation_baseline", 45, request, collect)

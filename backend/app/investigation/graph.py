@@ -1,6 +1,6 @@
-"""6B-1: collect/assess loop with terminal handoff, never approval or mutation."""
+"""Bounded investigation; optional production handoff to the existing approval graph."""
 from copy import deepcopy
-from typing import Any, TypedDict
+from typing import Any
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import interrupt
@@ -18,9 +18,11 @@ from backend.app.runtime.budget import BudgetExceeded
 from backend.app.persistence.leases import LeaseLost
 from backend.app.investigation.dialogue import VERSION, question_for, accept_answer
 from backend.app.investigation.resampling import authorize_sample, FRESHNESS_SECONDS
+from backend.app.agent.state import IncidentState
+from backend.app.services.round_context import INVESTIGATION_WORKFLOW
 
 
-class InvestigationState(TypedDict, total=False):
+class InvestigationState(IncidentState, total=False):
     workflow_version: str
     baseline: dict[str, Any]
     observations: list[dict[str, Any]]
@@ -85,14 +87,17 @@ def validate_decision(value, prompt, current, toolbox, terminal):
     return decision.model_dump(mode="json")
 
 
-def build_investigation_graph(budget, toolbox, model, *, checkpointer=None, interactive=False):
-    """Internal acceptance entry point. No production route or worker switch yet."""
+def build_investigation_graph(budget, toolbox, model, *, checkpointer=None, interactive=False,
+                              production=False, executor=None, verifier=None):
+    """Pin graph shape per workflow version; production writes require saved approval."""
     if interactive and checkpointer is None:
         raise ValueError("INTERACTIVE_CHECKPOINTER_REQUIRED")
-    version = VERSION if interactive else "readonly-investigation-v1"
+    if production and not interactive:
+        raise ValueError("PRODUCTION_INVESTIGATION_REQUIRES_INTERACTIVE")
+    version = INVESTIGATION_WORKFLOW if production else VERSION if interactive else "readonly-investigation-v1"
     prefix = "6b2" if interactive else "6b1"
     def initialize(state):
-        baseline = state["baseline"]
+        baseline = toolbox.state if production else state["baseline"]
         if digest(baseline) != digest(toolbox.state):
             raise ValueError("TOOLBOX_TARGET_MISMATCH")
         if baseline.get("incident_id") != budget.lease["incident_id"]:
@@ -104,7 +109,7 @@ def build_investigation_graph(budget, toolbox, model, *, checkpointer=None, inte
             if baseline["request"][field] != budget.lease["input_payload"][field]:
                 raise ValueError("RUN_TARGET_MISMATCH")
         bind_baseline(budget, baseline, version)
-        return {"workflow_version": version, "phase": "investigating", "step": 0, "observations": [], "history": [],
+        return {"baseline": baseline, "workflow_version": version, "phase": "investigating", "step": 0, "observations": [], "history": [],
                 "question": None, "answers": [], "asked_slots": []}
 
     def check_version(state):
@@ -123,6 +128,9 @@ def build_investigation_graph(budget, toolbox, model, *, checkpointer=None, inte
                 human = {"answers": state.get("answers", []), "asked_slots": state.get("asked_slots", []),
                          "freshness_seconds": FRESHNESS_SECONDS} if interactive else None
                 prompt = build_context(current, toolbox.manifest(), state["history"], terminal_only=terminal, feedback=feedback, dialogue=human)
+                if production:
+                    prompt["production"] = True
+                    prompt["write_limit"] = "After a human wait do not propose a write plan; start a new full investigation round first."
                 response = call_model(model, budget, prompt, request_id + (":correction" if attempt else ""),
                                       decision_key=None if terminal else request_id, terminal=terminal)
                 if response.get("error"):
@@ -136,6 +144,8 @@ def build_investigation_graph(budget, toolbox, model, *, checkpointer=None, inte
                     if (interactive and state.get("answers") and decision["action"] in {"conclude", "propose_plan"}
                             and decision["diagnosis"]["fault_category"] == "no_fault_detected"):
                         raise ValueError("CURRENT_HEALTH_REQUIRES_NEW_BASELINE_AFTER_HUMAN_WAIT")
+                    if production and state.get("answers") and decision["action"] == "propose_plan":
+                        raise ValueError("WRITE_PLAN_REQUIRES_NEW_BASELINE_AFTER_HUMAN_WAIT")
                     if not interactive and decision.get("resample_reason"):
                         raise ValueError("RESAMPLING_REQUIRES_INTERACTIVE_WORKFLOW")
                     break
@@ -151,9 +161,10 @@ def build_investigation_graph(budget, toolbox, model, *, checkpointer=None, inte
             if interactive and decision["action"] == "ask_user":
                 question = question_for(state, decision, budget, toolbox.manifest(), current["evidence"])
                 return {"step": step, "decision": decision, "history": [*state["history"], record], "phase": "waiting_user",
-                        "question": question, "asked_slots": [*state.get("asked_slots", []), decision["slot"]]}
+                        "question": question, "asked_slots": [*state.get("asked_slots", []), decision["slot"]],
+                        **({"clarification_round": question["version"]} if production else {})}
             output = {"status": decision["action"], "decision": decision, "cluster_writes_executed": False}
-            if decision["action"] in {"ask_user", "propose_plan"}:
+            if decision["action"] in {"ask_user", "propose_plan"} and not production:
                 output.update(status="handoff", stop_reason="READONLY_STAGE_REQUIRES_6B2")
             return {"step": step, "decision": decision, "history": [*state["history"], record], "phase": "finished", "output": output}
         except LeaseLost:
@@ -202,20 +213,67 @@ def build_investigation_graph(budget, toolbox, model, *, checkpointer=None, inte
         answer = accept_answer(budget, state["question"], value)
         answers = [*state.get("answers", []), answer]
         update = {"answers": answers, "question": None, "phase": "investigating"}
+        if production:
+            update["clarification_answers"] = answers
         if answer["skip"]:
             update.update(phase="finished", output=handoff(state, "HUMAN_QUESTION_SKIPPED"))
         return update
 
+    def exported(node):
+        def call(state):
+            update = node(state)
+            if production:
+                merged = {**state, **update}
+                if merged.get("baseline"):
+                    update.update(current_state(merged["baseline"], merged.get("observations", [])))
+            return update
+        return call
+
+    def project(state):
+        from backend.app.investigation.production import deterministic_plan, unknown_diagnosis
+        from backend.app.agent.nodes import skip_remediation, trace_event
+        current = current_state(state["baseline"], state["observations"])
+        output = state["output"]
+        decision = output.get("decision") or {}
+        diagnosis = decision.get("diagnosis") or unknown_diagnosis(current, output)
+        update = {**current, "diagnosis": diagnosis, "diagnosis_model_output": decision.get("diagnosis")}
+        if output["status"] == "propose_plan":
+            try:
+                plan = deterministic_plan({**current, "diagnosis": diagnosis}, decision["candidate"])
+                update.update(phase="remediation_planned", remediation_plan=plan.model_dump(mode="json"),
+                    requires_approval=True, risk_level=plan.risk_level, approved=None,
+                    trace=[trace_event("plan_remediation", "completed", "白名单计划由程序生成；未调用规划模型。")])
+            except ValueError as error:
+                update.update(phase="remediation_failed", requires_approval=False,
+                              errors=[{"stage": "plan_remediation", "code": "INVALID_DETERMINISTIC_PLAN", "message": str(error)}])
+        else:
+            update.update(skip_remediation({**current, "diagnosis": diagnosis}))
+        return update
+
+    end = "project_investigation" if production else END
     builder = StateGraph(InvestigationState)
-    builder.add_node("initialize", initialize)
-    builder.add_node("decide", decide)
-    builder.add_node("collect", collect)
+    builder.add_node("initialize", exported(initialize))
+    builder.add_node("decide", exported(decide))
+    builder.add_node("collect", exported(collect))
     if interactive:
-        builder.add_node("await_investigation_input", await_user_input)
-        builder.add_conditional_edges("await_investigation_input", lambda s: "decide" if s["phase"] == "investigating" else END)
+        builder.add_node("await_investigation_input", exported(await_user_input))
+        builder.add_conditional_edges("await_investigation_input", lambda s: "decide" if s["phase"] == "investigating" else end)
     builder.add_edge(START, "initialize")
     builder.add_edge("initialize", "decide")
     builder.add_conditional_edges("decide", lambda s: "collect" if s["phase"] == "collecting" else
-                                  "await_investigation_input" if s["phase"] == "waiting_user" else END)
-    builder.add_conditional_edges("collect", lambda s: "decide" if s["phase"] == "investigating" else END)
+                                  "await_investigation_input" if s["phase"] == "waiting_user" else end)
+    builder.add_conditional_edges("collect", lambda s: "decide" if s["phase"] == "investigating" else end)
+    if production:
+        from backend.app.agent.nodes import prepare_approval, request_human_approval, make_execute_remediation_node, make_verify_recovery_node
+        from backend.app.agent.graph import route_after_prepare_approval, route_after_approval, route_after_execution
+        builder.add_node("project_investigation", project)
+        builder.add_node("prepare_approval", prepare_approval)
+        builder.add_node("request_human_approval", request_human_approval)
+        builder.add_node("execute_remediation", make_execute_remediation_node(executor))
+        builder.add_node("verify_recovery", make_verify_recovery_node(verifier))
+        builder.add_conditional_edges("project_investigation", lambda s: "prepare_approval" if s.get("requires_approval") else END)
+        builder.add_conditional_edges("prepare_approval", route_after_prepare_approval, {"request": "request_human_approval", "stop": END})
+        builder.add_conditional_edges("request_human_approval", route_after_approval, {"execute": "execute_remediation", "stop": END})
+        builder.add_conditional_edges("execute_remediation", route_after_execution, {"verify": "verify_recovery", "stop": END})
+        builder.add_edge("verify_recovery", END)
     return builder.compile(checkpointer=checkpointer)

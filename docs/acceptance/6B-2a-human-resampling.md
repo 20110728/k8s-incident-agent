@@ -1,6 +1,6 @@
 # 6B-2a：持久化追问与有依据复采
 
-状态：已实现，待 ECS 验收。维护者已反馈 `PASS: 6B-1 ECS acceptance.`。
+状态：维护者已反馈 `PASS: 6B-2a ECS acceptance.`。下文记录本块交付范围；后续业务接入见 `6B-2b-production.md`。
 
 6B-2 分两块验收：本块实现调查图内部的人工等待/恢复、回答幂等和复采策略；下一块 6B-2b 接正式入口、worker/历史版本分流、现有回答 API，并组装确定性修复计划衔接审批执行。本块不改变浏览器和正式事件路由，旧图默认行为保留。
 
@@ -70,6 +70,6 @@ bash scripts/accept_stage6b2a.sh
 
 新增模块：`investigation/dialogue.py`、`resampling.py`；扩展 `contracts/context/graph/records.py` 和 `tools/investigation.py`；新增 `tests/investigation_dialogue/test_dialogue.py`，复用验收运行器。
 
-不新增依赖、环境配置或数据库迁移（仍复用迁移 13）；不要求重启 backend/worker/frontend，不构建前端。当前仅本地静态检查通过，ECS 动态结果待反馈。
+不新增依赖、环境配置或数据库迁移（仍复用迁移 13）；本块不要求重启 backend/worker/frontend，不构建前端。本地静态检查通过，维护者已反馈 ECS 脚本通过。
 
 尚未验证或实施：真实模型追问质量、时效定标、浏览器交互、现有消息/API 权限与内部回答适配、正式 worker 挂起/唤醒/发布、确定性计划和审批衔接。下一块接这些业务边界，6B-3 再展示调查过程并作真实模型对照。

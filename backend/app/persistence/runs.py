@@ -148,9 +148,9 @@ class PostgresRunRepository:
                             (run_id, incident_id, thread_id, Jsonb(payload), digest, SCOPE if key is not None else None, key, digest))
                         row = cursor.fetchone()
                         if dialogue:
-                            from backend.app.services.round_context import DIALOGUE_WORKFLOW
+                            from backend.app.services.round_context import selected_workflow
                             cursor.execute("""UPDATE incident_agent_app.runs SET workflow_version=%s,context_snapshot='{}',context_sha256=%s
-                                WHERE run_id=%s RETURNING *""", (DIALOGUE_WORKFLOW, request_digest({}), run_id))
+                                WHERE run_id=%s RETURNING *""", (selected_workflow(), request_digest({}), run_id))
                             row = cursor.fetchone()
             # Both transaction and connection contexts have committed before returning.
             report("accepted", row)

@@ -51,7 +51,7 @@ def build_incident_service(
             dialogue=True,
         )
         return IncidentApplicationService(
-            _ReadOnlyGraph(graph), repository, runs=runs, execution_mode=execution_mode,
+            _ReadOnlyGraph(graph, runs=runs, checkpointer=checkpointer), repository, runs=runs, execution_mode=execution_mode,
         )
     graph = build_incident_graph(
         collector=build_kubernetes_collector(),
@@ -79,10 +79,22 @@ class _DisabledWorkflowDependency:
 
 
 class _ReadOnlyGraph:
-    def __init__(self, graph):
+    def __init__(self, graph, *, runs=None, checkpointer=None):
         self._graph = graph
+        self._runs, self._checkpointer = runs, checkpointer
+        self._investigation_graph = None
 
     def get_state(self, config):
+        if self._runs is not None:
+            from backend.app.services.round_context import INVESTIGATION_WORKFLOW
+            rows = self._runs._read("SELECT workflow_version FROM incident_agent_app.runs WHERE thread_id=%s",
+                                   (config["configurable"]["thread_id"],))
+            if rows and rows[0]["workflow_version"] == INVESTIGATION_WORKFLOW:
+                if self._investigation_graph is None:
+                    from backend.app.investigation.graph import build_investigation_graph
+                    self._investigation_graph = build_investigation_graph(None, None, None,
+                        checkpointer=self._checkpointer, interactive=True, production=True)
+                return self._investigation_graph.get_state(config)
         return self._graph.get_state(config)
 
     def invoke(self, *args, **kwargs):

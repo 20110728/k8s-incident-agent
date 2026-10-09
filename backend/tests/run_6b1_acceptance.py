@@ -17,6 +17,9 @@ def main(*, stage="6b1", extra_targets=(), required_reports=("evidence-change.js
     if not database.startswith(f"incident_agent_test_{stage}_") or not audit:
         raise ValueError(f"Use bash scripts/accept_stage{stage}.sh")
     environment = dict(os.environ)
+    # Regression cases keep their original workflow regardless of deployment flag.
+    # Production-integration cases enable it explicitly in their fixture.
+    environment["INCIDENT_AGENT_INVESTIGATION_ENABLED"] = "false"
     url = isolated_database_url(get_database_settings().database_url.get_secret_value(), database)
     environment["INCIDENT_AGENT_TEST_DATABASE_URL"] = url
     with connect_database(DatabaseSettings(database_url=url)) as connection:

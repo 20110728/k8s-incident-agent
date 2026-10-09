@@ -6,7 +6,7 @@ from psycopg.types.json import Jsonb
 
 from backend.app.persistence.operations import OperationRepository, json_value
 from backend.app.persistence.runs import RunError, request_digest, validate_key
-from backend.app.services.round_context import build_round_context, DIALOGUE_WORKFLOW
+from backend.app.services.round_context import build_round_context, selected_workflow
 
 
 class RoundConflict(RunError):
@@ -89,7 +89,7 @@ class RoundRepository(OperationRepository):
                      source_message_id,input_message_sequence,context_snapshot,context_sha256,event_revision)
                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
                     (run_id, incident_id, thread_id, parent_run_id,
-                     latest["input_revision"] + 1 if latest else 1, Jsonb(payload), request_digest(payload), DIALOGUE_WORKFLOW,
+                     latest["input_revision"] + 1 if latest else 1, Jsonb(payload), request_digest(payload), selected_workflow(),
                      "incident-round:" + incident_id, key, digest, message_id, message["sequence"],
                      Jsonb(context), request_digest(context), incident["event_revision"])).fetchone()
                 # Old terminal output is frozen before the new run becomes visible.

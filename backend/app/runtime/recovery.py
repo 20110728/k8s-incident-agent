@@ -8,7 +8,7 @@ from psycopg import OperationalError
 
 from backend.app.persistence.runs import request_digest
 from backend.app.persistence.operations import approval_binding, json_value
-from backend.app.services.round_context import ROUND_WORKFLOWS, DIALOGUE_WORKFLOW
+from backend.app.services.round_context import ROUND_WORKFLOWS, DIALOGUE_WORKFLOW, INVESTIGATION_WORKFLOW
 
 
 READ_ONLY_NODES = frozenset({
@@ -62,6 +62,9 @@ def classify(lease: dict, snapshot, operation=None) -> RecoveryDecision:
     ):
         return stop("failed", "CHECKPOINT_INPUT_MISMATCH")
     saved = lease.get("approval_payload")
+    if lease["workflow_version"] == INVESTIGATION_WORKFLOW and state.get("workflow_version") != INVESTIGATION_WORKFLOW:
+        if pending != ("initialize",) or state.get("workflow_version") is not None:
+            return stop("failed", "CHECKPOINT_WORKFLOW_MISMATCH")
     if saved and (saved.get("binding") != approval_binding(state) or
                   saved.get("decision", {}).get("approval_id") != (state.get("approval_request") or {}).get("approval_id")):
         return stop("failed", "APPROVAL_BINDING_MISMATCH")
@@ -80,12 +83,17 @@ def classify(lease: dict, snapshot, operation=None) -> RecoveryDecision:
             return stop("reconciling", "OPERATION_RESULT_MISMATCH")
     phase = str(state.get("phase") or "unknown")
     if any(getattr(task, "interrupts", ()) for task in tasks):
-        if lease["workflow_version"] == DIALOGUE_WORKFLOW and phase == "waiting_user" and pending == ("await_user_input",):
+        human_node = "await_investigation_input" if lease["workflow_version"] == INVESTIGATION_WORKFLOW else "await_user_input"
+        if lease["workflow_version"] in {DIALOGUE_WORKFLOW, INVESTIGATION_WORKFLOW} and phase == "waiting_user" and pending == (human_node,):
             question = state.get("question") or {}
             answer = lease.get("answer_payload")
             # A checkpoint may already contain the previous reply and the next
             # question, even if the worker crashed before projecting that wait.
             if answer and answer in state.get("clarification_answers", []):
+                answer = None
+            if answer and lease["workflow_version"] == INVESTIGATION_WORKFLOW and any(
+                a.get("message_id") == answer.get("message_id") for a in state.get("answers", [])
+            ):
                 answer = None
             if answer:
                 if any(answer.get(key) != question.get(key) for key in ("question_id", "version")):
@@ -108,6 +116,10 @@ def classify(lease: dict, snapshot, operation=None) -> RecoveryDecision:
             return stop("succeeded")
         return stop("failed", "WORKFLOW_FAILED")
     allowed = READ_ONLY_NODES | ({"execute_remediation", "verify_recovery"} if saved and saved["decision"].get("approved") else set())
+    if lease["workflow_version"] == INVESTIGATION_WORKFLOW:
+        allowed = {"initialize", "decide", "collect", "await_investigation_input", "project_investigation",
+                   "prepare_approval", "request_human_approval"} | (
+                   {"execute_remediation", "verify_recovery"} if saved and saved["decision"].get("approved") else set())
     if not checkpoint_id or not set(pending).issubset(allowed):
         return stop("failed", "UNSUPPORTED_PENDING_TASK")
     if any(getattr(task, "name", None) not in allowed for task in tasks):

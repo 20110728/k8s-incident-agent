@@ -142,7 +142,10 @@ class ControlRepository(InteractionRepository):
 
     @storage_errors
     def answer(self, incident_id, run_id, body):
-        payload = {"action": "answer", "run_id": run_id, **body.model_dump()}
+        fields = body.model_dump()
+        if not fields.get("changed_resource_refs"):
+            fields.pop("changed_resource_refs", None)  # Preserve old idempotency hashes.
+        payload = {"action": "answer", "run_id": run_id, **fields}
         digest = request_digest(payload)
         with self._connect() as conn:
             conn.execute("SET LOCAL lock_timeout = '5s'")
@@ -162,14 +165,25 @@ class ControlRepository(InteractionRepository):
                 raise RoundConflict()
             if not body.skip and set(body.answers) != {q["slot"] for q in question["questions"]}:
                 raise RoundConflict()
-            content = body.content + "\n" + json.dumps({"answers": body.answers, "skip": body.skip}, ensure_ascii=False)
+            from backend.app.services.round_context import INVESTIGATION_WORKFLOW
+            if body.changed_resource_refs and (
+                row["workflow_version"] != INVESTIGATION_WORKFLOW or
+                not set(body.changed_resource_refs) <= {r["resource_ref"] for r in question.get("change_candidates", [])}
+            ):
+                raise RoundConflict()
+            answer_details = {"answers": body.answers, "skip": body.skip}
+            if body.changed_resource_refs:
+                answer_details["changed_resource_refs"] = body.changed_resource_refs
+            content = body.content + "\n" + json.dumps(answer_details, ensure_ascii=False)
             message = message_in_transaction(conn, incident_id, body.client_message_id, content)
             revision = conn.execute("UPDATE incident_agent_app.incidents SET event_revision=event_revision+1 WHERE incident_id=%s RETURNING event_revision", (incident_id,)).fetchone()["event_revision"]
             answer = {"question_id": body.question_id, "version": body.version, "answers": body.answers,
                       "skip": body.skip, "message_id": message["message_id"], "sequence": message["sequence"],
                       "evidence_revision": question.get("evidence_revision"), "accepted_at": message["created_at"].isoformat(),
-                      "questions": question["questions"], "question_source": "policy_generated",
+                      "questions": question["questions"], "question_source": question.get("source", "policy_generated"),
                       "source": "user_supplied_unverified"}
+            if row["workflow_version"] == INVESTIGATION_WORKFLOW:
+                answer["changed_resource_refs"] = body.changed_resource_refs
             conn.execute("""UPDATE incident_agent_app.runs SET answer_payload=%s,status='queued',event_revision=%s,
                 attempt_base=attempt,updated_at=clock_timestamp() WHERE run_id=%s""", (Jsonb(answer), revision, run_id))
             result = {"run_id": run_id, "thread_id": row["thread_id"], "question_id": body.question_id,

@@ -3,7 +3,18 @@ from backend.app.llm.context_builder import redact_sensitive_text, serialize_lim
 
 ROUND_WORKFLOW = "incident-round-v1"
 DIALOGUE_WORKFLOW = "incident-dialogue-v1"
-ROUND_WORKFLOWS = frozenset({ROUND_WORKFLOW, DIALOGUE_WORKFLOW})
+INVESTIGATION_WORKFLOW = "incident-investigation-v1"
+ROUND_WORKFLOWS = frozenset({ROUND_WORKFLOW, DIALOGUE_WORKFLOW, INVESTIGATION_WORKFLOW})
+
+
+def selected_workflow():
+    from backend.app.config import get_api_settings
+    settings = get_api_settings()
+    if settings.investigation_enabled:
+        if settings.execution_mode != "queued":
+            raise ValueError("INVESTIGATION_REQUIRES_QUEUED")
+        return INVESTIGATION_WORKFLOW
+    return DIALOGUE_WORKFLOW
 
 
 def build_round_context(messages, previous, parent_run_id, legacy_thread_id):

@@ -28,7 +28,7 @@ from backend.app.runtime.operations import LedgerExecutor
 from backend.app.tools.client import create_clients
 from backend.app.runtime.telemetry import report
 from backend.app.runtime.failpoints import get_failpoints, hit
-from backend.app.services.round_context import ROUND_WORKFLOWS, DIALOGUE_WORKFLOW
+from backend.app.services.round_context import ROUND_WORKFLOWS, DIALOGUE_WORKFLOW, INVESTIGATION_WORKFLOW
 from backend.app.persistence.operations import json_value
 from backend.app.runtime.budget import CURRENT, RunBudget, bind_budget
 
@@ -73,6 +73,14 @@ def production_graph(settings, repository, lease, lost):
     with fenced_checkpointer(settings, repository, lease, lost) as saver, bind_budget(RunBudget(repository, lease)):
         def owned(dependency):
             return OwnedDependency(dependency, repository, lease, lost)
+        if lease["workflow_version"] == INVESTIGATION_WORKFLOW:
+            from backend.app.investigation.graph import build_investigation_graph
+            from backend.app.investigation.production import LazyToolbox, LazyModel
+            yield build_investigation_graph(CURRENT.get(), LazyToolbox(CURRENT.get()), LazyModel(),
+                checkpointer=saver, interactive=True, production=True,
+                executor=owned(LedgerExecutor(create_clients(disable_retries=True, bounded_reads=True), repository, lease, lost)),
+                verifier=owned(build_recovery_verifier(repository=repository, lease=lease)))
+            return
         yield build_incident_graph(
             collector=owned(build_kubernetes_collector(bounded_reads=True)),
             retriever=owned(build_runbook_retriever()),
@@ -227,6 +235,12 @@ class Worker:
                                Command(resume=lease["approval_payload"]["decision"]) if decision.action == "resume" else
                                None if decision.action == "continue" else
                                {"incident_id": lease["incident_id"], "request": lease["input_payload"]})
+                if decision.action == "resume_user" and lease["workflow_version"] == INVESTIGATION_WORKFLOW:
+                    from backend.app.investigation.production import answer_for_investigation
+                    from backend.app.investigation.dialogue import accept_answer
+                    answer = answer_for_investigation(lease["answer_payload"], snapshot.values["question"])
+                    accept_answer(CURRENT.get(), snapshot.values["question"], answer)
+                    input_value = Command(resume=answer)
                 if decision.action == "start" and lease["workflow_version"] in ROUND_WORKFLOWS:
                     input_value["round_context"] = lease["context_snapshot"]
                     input_value["run_id"] = lease["run_id"]
