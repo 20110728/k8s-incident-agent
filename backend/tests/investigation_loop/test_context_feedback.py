@@ -7,8 +7,9 @@ import pytest
 from backend.app.investigation.context import build_context, estimate, INPUT_LIMIT
 from backend.app.investigation.diagnostics import debug_report
 from backend.tests.investigation_loop.test_loop import (
-    case, storage, state, identified, toolbox, Model, run, collect, stop, tool_request,
+    case, storage, state, identified, toolbox, Model, collect, stop, tool_request,
 )
+from backend.tests.investigation_dialogue.test_dialogue import session
 
 
 def two_logs(prompt):
@@ -56,7 +57,8 @@ def test_live_loop_exposes_both_results_and_records_context_without_full_logs(ca
         assert all("dependency connection refused" in e["excerpt"] for e in log_rows)
         return stop(prompt)
     model = Model(choose)
-    result = run(case, model, interactive=True)
+    with session(case, model) as (_, _, advance):
+        result = advance()
     assert len(model.prompts) == 2 and len(result["observations"]) == 2
     assert box.clients.core.api.read_namespaced_pod_log.call_count == 2
     with budget.edit() as data:
@@ -65,7 +67,10 @@ def test_live_loop_exposes_both_results_and_records_context_without_full_logs(ca
     assert sum(e["resource_type"] == "PodLogs" for e in second["context_evidence"]) == 2
     assert len(report["tool_attempts"]) == 2
     assert "dependency connection refused" not in json.dumps(report)
-    assert run(case, Model(lambda _: pytest.fail("replay invoked provider")), interactive=True) == result
+    # Reopen the real PostgreSQL checkpointer on the same thread. A completed
+    # checkpoint must be returned without invoking a model or rereading tools.
+    with session(case, Model(lambda _: pytest.fail("replay invoked provider"))) as (_, _, advance):
+        assert advance() == result
     assert box.clients.core.api.read_namespaced_pod_log.call_count == 2
 
 
@@ -77,7 +82,8 @@ def test_unjustified_repeat_uses_only_shared_correction_without_extra_reads(case
             return stop(prompt)
         return two_logs(prompt)
     model = Model(choose)
-    result = run(case, model, interactive=True)
+    with session(case, model) as (_, _, advance):
+        result = advance()
     assert len(model.prompts) == 3  # initial, repeated decision, one correction
     assert len(result["observations"]) == 2
     assert case[1].clients.core.api.read_namespaced_pod_log.call_count == 2

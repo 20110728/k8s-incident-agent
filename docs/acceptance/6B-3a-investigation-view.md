@@ -76,3 +76,5 @@ ECS 首次复验为 351 passed / 1 failed：诊断测试将缺少 `get_round` �
 - `test_context_feedback.py` 覆盖大基线与两份长日志共存、下一轮确实收到两份结果、缓存重放、重复请求有限纠错且不重复读取，以及空间不足明确停止。真实模型是否有效修正判断仍须新事件实测。
 
 复验、部署继续使用上述两个 6B-3a 脚本；无新配置、依赖、迁移。模型上下文指纹发生变化，沿用先结束活动调查再部署的升级要求。仅本地静态检查，不宣称动态用例或真实模型已通过。
+
+后续 ECS 复验为 354 passed / 3 failed：新增交互回归用例误用无 checkpointer 的只读测试入口，触发 `INTERACTIVE_CHECKPOINTER_REQUIRED`。已改用现有 PostgreSQL `session` 测试会话，恢复用例重新打开同一线程的持久化 checkpoint；生产保护不变。现有 backend.txt 足够定位，需重新验收，不需新增配置或迁移。
