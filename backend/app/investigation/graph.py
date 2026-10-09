@@ -158,6 +158,14 @@ def build_investigation_graph(budget, toolbox, model, *, checkpointer=None, inte
                         detail = diagnostics.get("parser_detail")
                         raise ValueError(response["parse_error"] + (": " + detail if detail else ""))
                     decision = validate_decision(response.get("parsed"), prompt, current, toolbox, terminal)
+                    if interactive and decision["action"] == "collect" and not decision.get("resample_reason"):
+                        # Reject an unjustified repeat while the shared correction
+                        # slot is still available, before scheduling any reads.
+                        with budget.edit() as data:
+                            prior_keys = {c.get("metadata", {}).get("semantic_key") for c in data["calls"].values()
+                                          if c["kind"] == "tool"}
+                        if any(toolbox.query_key(r) in prior_keys for r in decision["requests"]):
+                            raise ValueError("RESAMPLE_REASON_REQUIRED: query already attempted; use saved evidence, select a useful different query, or stop. Do not invent a change or staleness.")
                     if interactive and decision["action"] == "ask_user":
                         question_for(state, decision, budget, toolbox.manifest(), current["evidence"])
                     if (interactive and state.get("answers") and decision["action"] in {"conclude", "propose_plan"}
@@ -179,6 +187,7 @@ def build_investigation_graph(budget, toolbox, model, *, checkpointer=None, inte
             record = {"step": step, "action": decision["action"], "reason": decision.get("reason"),
                       "missing_fact": decision.get("missing_fact"), "evidence_ids": decision.get("evidence_ids", [])}
             if decision["action"] == "collect":
+                record["requests"] = deepcopy(decision["requests"])
                 return {"step": step, "decision": decision, "history": [*state["history"], record], "phase": "collecting"}
             if interactive and decision["action"] == "ask_user":
                 question = question_for(state, decision, budget, toolbox.manifest(), current["evidence"])

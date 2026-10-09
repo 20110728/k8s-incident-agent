@@ -31,6 +31,9 @@ def call_model(model, budget, prompt, request_id, *, decision_key=None, terminal
         request_id=request_id, fingerprint=digest(prompt), decision_key=decision_key,
         keep_tokens=0 if terminal else CALL_TOKENS, keep_seconds=0 if terminal else CALL_SECONDS,
         metadata={"purpose": "terminal" if terminal else "decision", "input_estimate": estimate(prompt),
+                  "context_evidence": [{k: e.get(k) for k in ("evidence_id", "resource_type", "coverage", "error", "excerpt_truncated")}
+                                       for e in prompt.get("evidence", [])],
+                  "omitted_evidence_ids": prompt.get("omitted_evidence_ids", []),
                   "input_limit": INPUT_LIMIT, "output_limit": OUTPUT_LIMIT, "estimate_source": "utf8_bytes_div_3_plus_schema_and_512"})
     if not fresh:
         return saved_result(budget, ticket)

@@ -65,3 +65,14 @@ python -m scripts.export_investigation_debug --incident-id <事件ID>
 ECS 顺序：`git pull --ff-only origin feature/baseline-contracts` → `bash scripts/accept_stage6b3a.sh`（预期 `PASS: 6B-3a ECS acceptance.`）→ `bash scripts/deploy_stage6b3a.sh`。无新增配置、依赖或迁移；部署更新 backend、worker、frontend。最后用新事件复验浏览器调查，真实模型可选择不同有效路径，不要求必定调用日志和事件；遇到失败导出该新事件，勿重跑旧事件补记录。
 
 ECS 首次复验为 351 passed / 1 failed：诊断测试将缺少 `get_round` 的 worker 仓储传给预算展示函数。测试已改用与 API 相同的 `InteractionRepository`，连接原隔离测试数据库，并断言其他事件不能读取该任务预算。业务代码和权限检查不变；需重跑上述验收脚本确认，Starlette 弃用警告不是本次失败原因。
+
+## 新采样进入上下文与重复调查修复
+
+事件 `1afeacf6-da22-4c58-b2c5-a8d5a602a325` 两次提出相同的两个当前日志查询，最终因 `RESAMPLE_REASON_REQUIRED` 停止。旧导出未保存输入证据清单，不能证明本次实际遗漏了哪些证据；代码确认存在基线大段内容优先挤占新日志空间的缺陷。
+
+- `context.build_context` 先给最新批次、其他调查采样、基线证据分配短片段，再用剩余空间扩展，保留截断标识；日志正文排在其元数据前。最近批次仍有效的证据若无法装入，明确停止而非继续付费请求模型。输入上限仍为 8000，遗漏清单从开始计入预算，资源与 runbook 保留原有限额。
+- `graph` 保存行动的具体 requests。交互/生产图对已采样查询缺少复采理由的请求，在执行前使用原有共享纠错额度反馈；失败仍停止。真正复采继续由 `authorize_sample` 检查变更回执、时效、历史日志限制和预算，不自动补理由、改参数或提高调用上限。
+- 模型账本 metadata 保存实际送入的证据编号/覆盖/错误/截断标识及遗漏编号；只读导出额外列出最多 6 次工具请求与采样状态，不导出完整日志或 prompt。旧采样状态可导出，旧模型输入清单不能补回。
+- `test_context_feedback.py` 覆盖大基线与两份长日志共存、下一轮确实收到两份结果、缓存重放、重复请求有限纠错且不重复读取，以及空间不足明确停止。真实模型是否有效修正判断仍须新事件实测。
+
+复验、部署继续使用上述两个 6B-3a 脚本；无新配置、依赖、迁移。模型上下文指纹发生变化，沿用先结束活动调查再部署的升级要求。仅本地静态检查，不宣称动态用例或真实模型已通过。

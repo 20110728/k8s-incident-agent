@@ -17,6 +17,7 @@ Repeat collection requires resample_reason user_change or stale and a server che
 For collect state the missing fact and expected usefulness. Choose 1 tool, or at most 2 independent tools; never assume results before reading them.
 Use only provided resource_ref and evidence IDs. Tools may be partial or fail: neither proves health. Current logs may suggest a dependency cause but cannot confirm the downstream root cause. Previous logs are historical.
 Do not repeat a query because other evidence changed or request a different line count to bypass duplication. Stop if no effective allowed alternative remains.
+History requests/results describe completed attempts. Read their current evidence excerpts before selecting another tool; an omitted or truncated excerpt is not permission to repeat the same query.
 For conclude/propose provide a CurrentDiagnosis consistent with policy_facts, cite required resource/business/configuration facts. Runtime/dependency root causes remain suspected; claims are not cluster evidence.
 Do not invent missing evidence, certainty, resources, runbooks or approval. Explain briefly in Chinese. When terminal_only=true choose ONLY conclude or stop; no more collection or questions.
 """
@@ -50,25 +51,53 @@ def build_context(state, manifest, history, *, terminal_only=False, feedback=Non
     # Server data can contain credentials too; redact before packing.
     prompt = json.loads(redact_output(prompt))
     required = set(facts["business_evidence_ids"] + facts["configuration_evidence_ids"] + facts["resource_evidence_ids"])
-    evidence = sorted(state.get("evidence", []), key=lambda e: (e["evidence_id"] not in required, not bool(e.get("request_id"))))
+    latest = next((h for h in reversed(history) if h.get("results")), {})
+    latest_ids = {eid for r in latest.get("results", []) for eid in r.get("evidence_ids", [])}
+    evidence = sorted(state.get("evidence", []), key=lambda e: (
+        e["evidence_id"] not in latest_ids, not bool(e.get("request_id")), e["evidence_id"] not in required))
+    # Count the omission inventory from the start; appending it after packing
+    # could itself overflow the input budget. Admit short excerpts fairly before
+    # spending spare space on one large baseline/configuration/log record.
+    prompt["omitted_evidence_ids"] = [e["evidence_id"] for e in evidence]
+    expansions = []
     for item in evidence:
-        text = redact_output(item.get("data", {}))
+        data = item.get("data", {})
+        if item.get("resource_type") == "PodLogs" and isinstance(data, dict):
+            data = {"content": data.get("content", ""), **{k: v for k, v in data.items() if k != "content"}}
+        text = redact_output(data)
         size = 1800 if item["evidence_id"] in required else 2500
         block = {"evidence_id": item["evidence_id"], "resource_type": item["resource_type"],
             "resource_name": item["resource_name"], "collected_at": item.get("collected_at"),
             "error": item.get("error"), "coverage": item.get("coverage", "baseline_snapshot"),
-            "excerpt": text[:size], "excerpt_truncated": len(text) > size or item.get("truncated", False)}
+            "excerpt": text[:600], "excerpt_truncated": len(text) > 600 or item.get("truncated", False)}
         prompt["evidence"].append(block)
         prompt["available_evidence_ids"].append(item["evidence_id"])
+        prompt["omitted_evidence_ids"].remove(item["evidence_id"])
         if estimate(prompt) > INPUT_LIMIT - 1200:
             prompt["evidence"].pop()
             prompt["available_evidence_ids"].pop()
             prompt["omitted_evidence_ids"].append(item["evidence_id"])
+        else:
+            expansions.append((block, text, size, item.get("truncated", False)))
+    if latest_ids.intersection(e["evidence_id"] for e in evidence) - set(prompt["available_evidence_ids"]):
+        # Do not pay for another decision that cannot see the last collection.
+        raise ValueError("LATEST_TOOL_EVIDENCE_NOT_IN_CONTEXT")
     for resource in manifest["resources"]:
         prompt["resources"].append(resource)
         if estimate(prompt) > INPUT_LIMIT - 650:
             prompt["resources"].pop()
             break
+    for block, text, size, truncated in expansions:
+        low, high = len(block["excerpt"]), min(size, len(text))
+        while low < high:
+            mid = (low + high + 1) // 2
+            block["excerpt"] = text[:mid]
+            if estimate(prompt) <= INPUT_LIMIT - 650:
+                low = mid
+            else:
+                high = mid - 1
+        block["excerpt"] = text[:low]
+        block["excerpt_truncated"] = len(text) > low or truncated
     for item in state.get("retrieved_runbooks", [])[:3]:
         block = {"runbook_id": item["runbook_id"], "excerpt": redact_output(item.get("content", ""))[:900]}
         prompt["runbooks"].append(block)
