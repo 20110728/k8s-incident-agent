@@ -6,7 +6,7 @@ from backend.app.investigation.cards import evidence_card, VERSION as CARD_VERSI
 from backend.app.investigation.records import digest
 from backend.app.tools.investigation import redact_output
 
-VERSION = "investigation-context-v2"
+VERSION = "investigation-context-v2.1"
 
 
 def text(value, limit):
@@ -113,7 +113,7 @@ def card_block(item, *, expanded=False):
             return {k: shrink(v, f"{path}.{k}") for k, v in value.items()}
         return value
     if card["parse_status"] == "parsed":
-        content = shrink(card["fields"])
+        content = shrink(model_fields(card))
     else:
         content = {"unparsed_excerpt": shrink(card["excerpt"]), "reason": card["parse_reason"]}
     if omissions:
@@ -121,14 +121,50 @@ def card_block(item, *, expanded=False):
     identity = card["identity"]
     block = {"evidence_id": card["evidence_id"], "resource_type": identity["resource_type"],
              "resource_name": identity["resource_name"], "collected_at": card["collected_at"],
-             "error": card["error"], "coverage": card["coverage"], "parse_status": card["parse_status"],
+             "coverage": card["coverage"],
              "excerpt": json.dumps(content, sort_keys=True, ensure_ascii=False, separators=(",", ":")),
              "excerpt_truncated": True, "projection": CARD_VERSION}
     # Identity is metadata, not a second copy of the sampled body.
-    for key in ("uid", "container", "previous"):
+    for key in ("container", "previous"):
         if identity[key] is not None:
             block[key] = identity[key]
     block["source_truncated"] = card["source_truncated"]
+    if card["error"] is not None:
+        block["error"] = card["error"]
+    if card["parse_status"] != "parsed":
+        block["parse_status"] = card["parse_status"]
     if card["projection_omissions"]:
         block["projection_omitted"] = True
     return block
+
+
+def model_fields(card):
+    """Prompt-only projection; C1 export retains full identity and audit detail."""
+    fields = deepcopy(card["fields"])
+    kind = card["identity"]["resource_type"]
+    # Name/namespace already come from the evidence header and incident target.
+    for key in ("name", "namespace", "service_name", "service_uid"):
+        fields.pop(key, None)
+    if kind == "PodStatus":
+        containers = []
+        for value in fields.get("containers", []):
+            current = {k: value[k] for k in ("state", "ready", "waiting_reason", "waiting_message",
+                       "terminated_reason", "terminated_exit_code") if value.get(k) is not None}
+            historical = {k: value[k] for k in ("restart_count", "last_terminated_reason", "last_terminated_exit_code")
+                          if value.get(k) is not None}
+            containers.append({"name": value.get("name"), "current": current, "historical_only": historical})
+        fields["containers"] = containers
+    elif kind == "Deployment":
+        fields.pop("template_labels", None)
+        for container in fields.get("containers", []):
+            container.pop("image", None)
+    elif kind == "EndpointSlice":
+        fields["endpoints"] = [{k: endpoint[k] for k in ("target_name", "ready", "serving", "terminating", "conditions")
+                                if k in endpoint} for endpoint in fields.get("endpoints", [])]
+    elif kind == "PodLogs":
+        logs = fields["logs"]
+        fields = {"groups": [{k: group[k] for k in ("message", "count", "first_timestamp", "last_timestamp")
+                              if group.get(k) is not None} for group in logs["groups"]],
+                  "sampled_lines": logs["scanned_lines"], "omitted_lines": logs["omitted_lines"],
+                  "omitted_groups": logs["omitted_groups"], "omitted_group_occurrences": logs["omitted_group_occurrences"]}
+    return fields

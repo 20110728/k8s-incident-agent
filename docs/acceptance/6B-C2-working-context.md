@@ -1,6 +1,6 @@
 # 6B-C2：调查状态与上下文
 
-状态：C1 已由维护者反馈 ECS PASS；C2 已实现，待 ECS 验收。
+状态：C1 已由维护者反馈 ECS PASS；C2 浏览器实测暴露日志解码与卡片体积问题，本页修复块已实现，待 ECS 复验。
 
 ## 实现机制
 
@@ -32,3 +32,13 @@ bash scripts/deploy_stage6b2b_backend.sh
 可选对新事件使用 `python -m scripts.export_investigation_debug --incident-id <事件ID>`，查看 `metadata.context_version/selection/working_state` 或 `context_assembly_failures`。实际 Token 降幅和真实模型调查质量待实测，不以受控 PASS 推断浏览器全部通过。
 
 本地仅完成 261 个 Python 文件 AST 语法解析、Bash `-n` 和 Git 差异检查；未运行 pytest、数据库动态测试或模型调用。
+
+## C2 修复块（2026-10-10）
+
+事件 `9ae60127-e9e1-49b3-9212-cf913e277e4a` 第一次生成正常、两次日志读取成功，第二次调用前因 Deployment/BusinessCheck 未装入停止；不是 6 万总额度用尽。导出另显示 `b'...\\n...'` 被当成一行，导致日志次数和时间提取失效。
+
+- `tools/log_text.py` 在调查及基线日志入口统一 UTF-8 严格解码；坏编码/未知响应类型按原异常路径报告失败，不伪造可用日志。调查日志先解码、再脱敏、再限长，保存普通文本 payload，避免截断 JSON 字符串破坏换行。旧账本不改写；疑似 bytes repr 的旧记录标未解析，不 eval 或自动反转义。
+- 模型视图升级 `investigation-context-v2.1`：移除重复名称/namespace/UID及部分展示字段，Endpoint 只取关系与就绪字段，日志只取消息、次数、首末时间和遗漏计数；C1 导出仍保留完整卡片。Pod 容器的当前状态与 `historical_only` 明确分开，提示过去退出记录不能证明当前根因，调查上个实例应选择 previous 日志。权限、引用、8k 单次估算与 60k 总额度不放宽，不新增模型调用。
+- `test_c2_fix.py` 用同类真实字段、较长资源名和中文 bytes 日志验证两次采集后必需证据仍可见、100 行聚合、实际 JSONB/checkpoint 回放不重复调用、坏编码与脱敏限长。验收额外覆盖两个日志工具入口；`c2-fix.json` 记录估算和结果。此为受控回归，真实模型是否正确选择日志实例仍需浏览器复验。
+
+沿用上面的 `accept_stage6bc2.sh` 和后端部署脚本；先结束活动调查再升级，用新事件验证，旧事件不重跑。无新增依赖/配置/迁移，无前端更新；需重启 backend/worker。本修复块本地仅完成 263 个 Python 文件 AST、Bash `-n` 与差异检查，未本地运行动态测试。

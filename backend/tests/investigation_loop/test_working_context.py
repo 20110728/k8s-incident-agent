@@ -12,6 +12,7 @@ from backend.app.investigation.evidence import current_state, adapt
 from backend.app.investigation.graph import validate_decision
 from backend.app.investigation.model import call_model
 from backend.app.investigation.working_context import human_context, historical_context, unique_evidence
+from backend.app.investigation.working_context import VERSION
 from backend.tests.investigation_loop.test_loop import (
     case, storage, state, identified, toolbox, Model, run, stop,
 )
@@ -109,7 +110,7 @@ def test_paid_call_replays_and_persists_selection_without_raw_bodies(case):
         calls = [c for c in data["calls"].values() if c["kind"] == "investigation_model"]
         assert len(calls) == 1
         metadata = calls[0]["metadata"]
-        assert metadata["context_version"] == "investigation-context-v2" and metadata["selection"]
+        assert metadata["context_version"] == VERSION and metadata["selection"]
         assert all("excerpt" not in item for item in metadata["selection"])
 
 

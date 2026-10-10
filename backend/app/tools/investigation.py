@@ -10,6 +10,7 @@ from backend.app.agent.target_identity import validate_relationships
 from backend.app.llm.context_builder import redact_sensitive_text
 from backend.app.service_profiles.registry import matched_profile, load_profile, profile_digest
 from backend.app.tools.deadline import read_budget
+from backend.app.tools.log_text import decode_log_content
 from backend.app.tools.service_tools import get_service
 from backend.app.tools.workload_tools import get_deployment_config, resolve_pod_owner
 
@@ -173,10 +174,18 @@ class ReadOnlyToolbox:
                 value, limited = self.read(request, ref, service, deployment)
                 self.validate_live(ref)  # Reject replacement while reading logs/events.
                 text = redact_output(value)
-                result.update(text=text[:12000], truncated=limited or len(text) > 12000,
-                              coverage="partial" if limited or len(text) > 12000 else "observed")
-                if len(text) <= 12000:
-                    result["payload"] = json.loads(text)
+                if request.tool == "pod_logs":
+                    # Keep line breaks as text, including when bounded. A cut
+                    # JSON-encoded string cannot safely be parsed on recovery.
+                    plain = json.loads(text)
+                    result.update(text=plain[:12000], payload=plain[:12000],
+                                  truncated=True, coverage="partial")
+                    text = None
+                if text is not None:
+                    result.update(text=text[:12000], truncated=limited or len(text) > 12000,
+                                  coverage="partial" if limited or len(text) > 12000 else "observed")
+                    if len(text) <= 12000:
+                        result["payload"] = json.loads(text)
         except Exception as error:
             result.update(error_code="ACCESS_DENIED" if getattr(error, "status", None) in (401, 403) else "TOOL_READ_FAILED_OR_TARGET_CHANGED")
             result["target_changed"] = isinstance(error, ValueError) and str(error) in {
@@ -206,7 +215,7 @@ class ReadOnlyToolbox:
         if request.tool == "pod_logs":
             value = self.clients.core.read_namespaced_pod_log(name=name, namespace=ns, container=ref["container"],
                 previous=request.previous, tail_lines=request.tail_lines, limit_bytes=12000, timestamps=True, _request_timeout=(3, 10))
-            return value, True  # A tail never proves absence of older faults.
+            return decode_log_content(value), True  # A tail never proves absence of older faults.
         if request.tool == "pod_events":
             events = self.clients.core.list_namespaced_event(namespace=ns,
                 field_selector=f"involvedObject.uid={ref['uid']}", limit=50, _request_timeout=(3, 10))

@@ -124,6 +124,8 @@ def project(kind, data, truncated):
     if kind == "PodLogs":
         if not isinstance(data.get("content"), str):
             return {}, "unparsed", "LOG_CONTENT_NOT_TEXT"
+        if data["content"].startswith(("b'", 'b"')):
+            return {}, "unparsed", "POSSIBLE_LEGACY_BYTES_REPR"
         return {"logs": grouped_logs(data["content"])}, "parsed", None
     if kind == "ToolObservation":
         # Older records contain JSON text rather than a typed payload. Never

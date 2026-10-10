@@ -6,4 +6,5 @@ if __name__ == "__main__":
     raise SystemExit(main(stage="6bc2", base_targets=(
         "backend/tests/investigation_loop", "backend/tests/investigation_dialogue",
         "backend/tests/investigation_production",
-    ), required_reports=("working-context.json", "evidence-change.json", "human-resampling.json", "production-flow.json")))
+        "backend/tests/investigation/test_tools.py", "backend/tests/unit/test_service_and_pod_tools.py",
+    ), required_reports=("working-context.json", "c2-fix.json", "evidence-change.json", "human-resampling.json", "production-flow.json")))

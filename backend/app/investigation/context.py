@@ -21,6 +21,7 @@ Repeat collection requires resample_reason user_change or stale and a server che
 For collect state the missing fact and expected usefulness. Choose 1 tool, or at most 2 independent tools; never assume results before reading them.
 Keep reason and missing_fact concise (prefer at most 120 Chinese characters each); cite evidence IDs instead of repeating all observed facts.
 Use only provided resource_ref and evidence IDs. Tools may be partial or fail: neither proves health. Current logs may suggest a dependency cause but cannot confirm the downstream root cause. Previous logs are historical.
+Container current state is separate from historical_only. Past OOMKilled/exit codes/restart counts do not prove the present fault. To inspect the previous container instance request previous=true; current logs cannot establish what preceded a past exit. Select the log instance that matches your missing fact.
 Do not repeat a query because other evidence changed or request a different line count to bypass duplication. Stop if no effective allowed alternative remains.
 History requests/results describe completed attempts. Read their current evidence excerpts before selecting another tool; an omitted or truncated excerpt is not permission to repeat the same query.
 For conclude/propose provide a CurrentDiagnosis consistent with policy_facts, cite required resource/business/configuration facts. Runtime/dependency root causes remain suspected; claims are not cluster evidence.

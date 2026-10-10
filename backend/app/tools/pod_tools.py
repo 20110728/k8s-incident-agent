@@ -189,6 +189,8 @@ def get_pod_logs(
         _request_timeout=REQUEST_TIMEOUT,
     )
 
+    from backend.app.tools.log_text import decode_log_content
+    content = decode_log_content(content)
     truncated = len(content) > MAX_LOG_CHARACTERS
 
     if truncated:
