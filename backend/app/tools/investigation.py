@@ -10,7 +10,7 @@ from backend.app.agent.target_identity import validate_relationships
 from backend.app.llm.context_builder import redact_sensitive_text
 from backend.app.service_profiles.registry import matched_profile, load_profile, profile_digest
 from backend.app.tools.deadline import read_budget
-from backend.app.tools.log_text import decode_log_content
+from backend.app.tools.log_text import read_log_response
 from backend.app.tools.service_tools import get_service
 from backend.app.tools.workload_tools import get_deployment_config, resolve_pod_owner
 
@@ -186,6 +186,7 @@ class ReadOnlyToolbox:
                                   coverage="partial" if limited or len(text) > 12000 else "observed")
                     if len(text) <= 12000:
                         result["payload"] = json.loads(text)
+                        result["payload_complete"] = True
         except Exception as error:
             result.update(error_code="ACCESS_DENIED" if getattr(error, "status", None) in (401, 403) else "TOOL_READ_FAILED_OR_TARGET_CHANGED")
             result["target_changed"] = isinstance(error, ValueError) and str(error) in {
@@ -214,8 +215,8 @@ class ReadOnlyToolbox:
             return checks, any(c["status"] in {"unknown", "skipped"} for c in checks)
         if request.tool == "pod_logs":
             value = self.clients.core.read_namespaced_pod_log(name=name, namespace=ns, container=ref["container"],
-                previous=request.previous, tail_lines=request.tail_lines, limit_bytes=12000, timestamps=True, _request_timeout=(3, 10))
-            return decode_log_content(value), True  # A tail never proves absence of older faults.
+                previous=request.previous, tail_lines=request.tail_lines, limit_bytes=12000, timestamps=True, _preload_content=False, _request_timeout=(3, 10))
+            return read_log_response(value), True  # A tail never proves absence of older faults.
         if request.tool == "pod_events":
             events = self.clients.core.list_namespaced_event(namespace=ns,
                 field_selector=f"involvedObject.uid={ref['uid']}", limit=50, _request_timeout=(3, 10))

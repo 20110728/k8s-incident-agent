@@ -6,7 +6,7 @@ from backend.app.investigation.cards import evidence_card, VERSION as CARD_VERSI
 from backend.app.investigation.records import digest
 from backend.app.tools.investigation import redact_output
 
-VERSION = "investigation-context-v2.1"
+VERSION = "investigation-context-v2.2"
 
 
 def text(value, limit):
@@ -90,7 +90,7 @@ def unique_evidence(rows):
     return result
 
 
-def card_block(item, *, expanded=False):
+def card_block(item, *, expanded=False, compact=False):
     """A single valid JSON representation, never raw text plus repeated fields.
 
     This is a bounded view of the C1 card, not the complete card/export. Omission
@@ -100,12 +100,12 @@ def card_block(item, *, expanded=False):
     omissions = []
     def shrink(value, path="fields"):
         if isinstance(value, str):
-            cap = 300 if expanded else 140
+            cap = 80 if compact else 300 if expanded else 140
             if len(value) > cap:
                 omissions.append(path)
             return value[:cap]
         if isinstance(value, list):
-            cap = 8 if expanded else 2
+            cap = 1 if compact else 8 if expanded else 2
             if len(value) > cap:
                 omissions.append(path)
             return [shrink(v, f"{path}[{i}]") for i, v in enumerate(value[:cap])]

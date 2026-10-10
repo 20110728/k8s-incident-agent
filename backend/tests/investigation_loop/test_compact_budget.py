@@ -17,16 +17,16 @@ from backend.tests.investigation_loop.test_context_feedback import crowd_baselin
 
 def test_new_policy_and_existing_budget_snapshot_are_distinct(case):
     budget = case[0]
-    assert POLICY["total_tokens"] == 60000
+    assert POLICY["total_tokens"] == 120000
     with budget.edit() as data:
-        assert data["policy"]["total_tokens"] == 60000
+        assert data["policy"]["total_tokens"] == 120000
         data["policy"].update(version="investigation-budget-v1", total_tokens=40000)
     with RunBudget(budget.repo, budget.lease).edit() as data:
         assert data["policy"]["total_tokens"] == 40000
-    assert POLICY["total_tokens"] == 60000
+    assert POLICY["total_tokens"] == 120000
 
 
-@pytest.mark.parametrize("limit,used", [(40000, 22609), (60000, 42609)])
+@pytest.mark.parametrize("limit,used", [(60000, 32609), (120000, 92609)])
 def test_remaining_budget_routes_directly_to_final_without_double_reservation(case, limit, used):
     budget, box, _ = case
     with budget.edit() as data:
@@ -52,7 +52,7 @@ def test_remaining_budget_routes_directly_to_final_without_double_reservation(ca
 def test_correction_switches_to_final_only_after_cost_settlement(case):
     budget = case[0]
     with budget.edit() as data:
-        data["policy"]["total_tokens"] = 40000
+        data["policy"]["total_tokens"] = 60000
     budget.reserve("embedding", tokens=20000)
     class PaidModel(Model):
         def invoke(self, prompt):
@@ -73,10 +73,10 @@ def test_correction_switches_to_final_only_after_cost_settlement(case):
         assert data["tokens"] == 32000 and data["exhausted"] is None
 
 
-def test_final_only_still_rejects_collection_and_insufficient_single_call(case):
+def test_final_only_still_rejects_invented_citations(case):
     budget, box, _ = case
-    budget.reserve("embedding", tokens=45000)
-    model = Model(collect)
+    budget.reserve("embedding", tokens=92000)
+    model = Model(lambda prompt: {**stop(prompt), "evidence_ids": ["ev-invalid"]})
     with session(case, model) as (_, _, advance):
         result = advance()
     assert result["output"]["stop_reason"] == "DECISION_VALIDATION_FAILED"
@@ -86,7 +86,7 @@ def test_final_only_still_rejects_collection_and_insufficient_single_call(case):
 
 def test_cannot_afford_one_final_call_never_invokes_provider(case):
     budget = case[0]
-    budget.reserve("embedding", tokens=51000)
+    budget.reserve("embedding", tokens=102000)
     with session(case, Model(lambda _: pytest.fail("unfunded model call"))) as (_, _, advance):
         result = advance()
     assert result["output"]["stop_reason"] == "MODEL_TOKEN_LIMIT"

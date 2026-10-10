@@ -240,7 +240,7 @@ def test_checkpoint_resume_after_tools_does_not_repeat_completed_request(case, s
 
 def test_context_remains_valid_bounded_json_and_only_lists_visible_evidence(case):
     _, box, _ = case
-    for n in range(80):
+    for n in range(200):
         box.state["evidence"].append({"evidence_id": f"ev-large-{n:03d}", "resource_type": "PodEvents",
             "resource_name": str(n), "data": {"text": "x" * 30000}, "error": None})
     prompt = build_context(box.state, box.manifest(), [])
@@ -333,7 +333,7 @@ def test_target_change_stops_before_second_request_in_batch(case):
 def test_missing_usage_retains_reservations_and_protects_final_headroom(case):
     budget, box, _ = case
     with budget.edit() as data:
-        data["policy"].update(version="investigation-budget-v1", total_tokens=40000)
+        data["policy"].update(version="test-budget", total_tokens=80000)
     prompt = build_context(box.state, box.manifest(), [])
     model = Mock()
     model.invoke.return_value = {"parsed": {"decision": stop(prompt)}, "usage": {}}
@@ -344,7 +344,7 @@ def test_missing_usage_retains_reservations_and_protects_final_headroom(case):
     assert model.invoke.call_count == 3
     call_model(model, budget, prompt, "terminal", terminal=True)
     with budget.edit() as data:
-        assert data["tokens"] == 38000
+        assert data["tokens"] == 76000
 
 
 def test_ask_is_explicit_handoff_without_human_interrupt_or_write(case):

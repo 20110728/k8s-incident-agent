@@ -10,8 +10,8 @@ from uuid import uuid4
 from psycopg.types.json import Jsonb
 
 CURRENT = ContextVar("run_budget", default=None)
-POLICY = {"version": "investigation-budget-v2", "active_seconds": 300, "extra_seconds": 90,
-          "decisions": 3, "tools": 6, "input_tokens": 12000, "output_tokens": 2000, "total_tokens": 60000,
+POLICY = {"version": "investigation-budget-v3", "active_seconds": 300, "extra_seconds": 90,
+          "decisions": 3, "tools": 6, "input_tokens": 24000, "output_tokens": 4000, "total_tokens": 120000,
           "write_reserve_seconds": 150}
 
 

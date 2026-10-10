@@ -76,7 +76,8 @@ def adapt(result, request, ref):
         # A single slice/event tail/ReplicaSet is supplementary, not complete
         # Pod/Endpoint inventory. Keep it visible without upgrading ready facts.
         add("ToolObservation", f"{ref['name']}/{request['tool']}", {"tool": request["tool"],
-            "namespace": ref["namespace"], "uid": ref["uid"], "text": result["text"]})
+            "namespace": ref["namespace"], "uid": ref["uid"], "text": result["text"],
+            **({"payload": payload, "payload_complete": True} if result.get("payload_complete") is True else {})})
     if not rows:
         add("ToolObservation", ref["name"], {"tool": request["tool"]}, "EMPTY_OBSERVATION")
     invalidate = {"registered_business": [("BusinessCheck", ref["service"])],

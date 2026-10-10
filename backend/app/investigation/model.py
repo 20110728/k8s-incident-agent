@@ -49,7 +49,7 @@ def call_model(model, budget, prompt, request_id, *, decision_key=None, terminal
         request_id=request_id, fingerprint=digest(prompt), decision_key=decision_key,
         keep_tokens=0 if terminal else CALL_TOKENS, keep_seconds=0 if terminal else CALL_SECONDS,
         metadata={"purpose": "terminal" if terminal else "decision", "input_estimate": estimate(prompt),
-                  "context_version": prompt.get("context_version"), "context_purpose": prompt.get("purpose"),
+                  "context_version": prompt.get("context_version"), "context_purpose": prompt.get("purpose"), "context_view": prompt.get("context_view"),
                   "working_state": prompt.get("working_state"),
                   "selection": [{"evidence_id": e["evidence_id"], "representation": e.get("projection"),
                                  "excerpt_digest": digest(e.get("excerpt")),
@@ -77,7 +77,7 @@ def call_model(model, budget, prompt, request_id, *, decision_key=None, terminal
             result["diagnostics"] = response["diagnostics"]
         # Normalize provider values into bounded serializable data. Do not store
         # arbitrary raw provider objects or another copy of the full prompt.
-        if len(encode(result)) > 24000:
+        if len(encode(result)) > 48000:
             result = {"parsed": None, "parse_error": "MODEL_RESULT_TOO_LARGE"}
     except Exception as error:
         result, usage, actual = {"error": "MODEL_REQUEST_FAILED", "diagnostics": {"error_type": type(error).__name__}}, {}, None

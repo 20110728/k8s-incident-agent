@@ -63,8 +63,12 @@ def deterministic_plan(state, candidate):
 def unknown_diagnosis(current, output):
     facts = diagnostic_facts(current)
     reason = output.get("stop_reason") or (output.get("decision") or {}).get("reason") or "INVESTIGATION_STOPPED"
+    resource = {"ready": "就绪", "not_ready": "未就绪", "unknown": "未知"}[facts["resource_status"]]
+    business = {"passed": "通过", "failed": "失败", "unknown": "未知"}[facts["business_status"]]
+    summary = f"已保存 {len(current['evidence'])} 项证据；采样时资源状态：{resource}，业务检查：{business}。"
+    summary += "这些状态不能单独确认根因或代表当前已恢复。程序交接：" + reason
     return CurrentDiagnosis(fault_category="unknown", confidence=0.0, root_cause="本轮调查已停止，尚不能确定根因。",
-        reasoning_summary="程序交接：" + reason, evidence_ids=[e["evidence_id"] for e in current["evidence"]], runbook_ids=[],
+        reasoning_summary=summary, evidence_ids=[e["evidence_id"] for e in current["evidence"]], runbook_ids=[],
         assessment=dict(schema_version="v2", problem_domain="insufficient_evidence", symptoms=[], root_cause_hypotheses=[],
             missing_evidence=(output.get("decision") or {}).get("unknowns") or ["足以确认根因的当前证据"],
             next_investigation=["核对本轮记录，必要时明确发起新一轮完整调查"],

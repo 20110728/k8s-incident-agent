@@ -362,7 +362,7 @@ LangGraph 负责图状态、节点路由、检查点、等待用户/审批以及
 
 **范围：复用存储，强化程序提取，统一上下文组装。** 保留 PostgreSQL、证据/消息/调用账本及 LangGraph checkpoint。“本地处理”指后端 Python 在部署环境执行，不是开发电脑执行。默认不增加模型调用、依赖或独立服务；必要字段和迁移在对应块明确。
 
-C1 [程序预处理验收](acceptance/6B-C1-evidence-cards.md)已反馈 ECS PASS；C2 已接入调查/收尾上下文，浏览器暴露日志 bytes 解码与卡片体积问题，限定修复块待复验，见 [调查状态与上下文验收](acceptance/6B-C2-working-context.md)。C3 尚未实施；下文整体契约不代表所有能力均已完成。
+C1 [程序预处理验收](acceptance/6B-C1-evidence-cards.md)已反馈 ECS PASS；C2 当前限定为 v2.2 收尾修复：原始 HTTP 日志解码、完整部分样本解析、预算翻倍和上下文紧凑降级，待 ECS 完整三轮采集及新事件复验，见 [调查状态与上下文验收](acceptance/6B-C2-working-context.md)。本块不扩展 C3；下文整体契约不代表所有能力均已完成。
 
 | 信息 | 程序负责 | 模型负责 |
 | --- | --- | --- |

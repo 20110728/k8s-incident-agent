@@ -9,8 +9,8 @@ from backend.app.investigation.working_context import (
     VERSION, human_context, historical_context, working_state, unique_evidence, card_block,
 )
 
-INPUT_LIMIT = 8000
-OUTPUT_LIMIT = 1500
+INPUT_LIMIT = 16000
+OUTPUT_LIMIT = 3000
 CALL_TOKENS = INPUT_LIMIT + OUTPUT_LIMIT
 CALL_SECONDS = 30
 
@@ -45,13 +45,13 @@ class ContextAssemblyError(ValueError):
                           "omitted_ids": prompt["omitted_evidence_ids"]}
 
 
-def build_context(state, manifest, history, *, terminal_only=False, feedback=None, dialogue=None):
+def build_context(state, manifest, history, *, terminal_only=False, feedback=None, dialogue=None, _compact=False):
     facts = diagnostic_facts(state)
     human = human_context(dialogue)
     memory = working_state(state, facts, human)
     prompt = {"context_version": VERSION, "purpose": "diagnosis" if terminal_only else "investigate",
         "target": state["request"], "policy_facts": facts, "working_state": memory,
-        "terminal_only": terminal_only, "tool_guide": TOOL_GUIDE, "resources": [], "evidence": [],
+        "terminal_only": terminal_only, "tool_guide": {} if terminal_only else TOOL_GUIDE, "resources": [], "evidence": [],
         "runbooks": [], "available_evidence_ids": [], "available_runbook_ids": [],
         "history": compact_history(history), "feedback": feedback, "omitted_evidence_ids": [],
         "context_coverage": "Selected program-extracted fields only. User claims and historical hypotheses are not current facts. Only displayed evidence IDs may be cited; omission never authorizes recollection."}
@@ -75,7 +75,7 @@ def build_context(state, manifest, history, *, terminal_only=False, feedback=Non
     # Keep an entire valid compact JSON view; never cut a JSON string mid-field.
     selected = []
     for item in evidence:
-        block = card_block(item)
+        block = card_block(item, compact=_compact)
         prompt["evidence"].append(block)
         prompt["available_evidence_ids"].append(item["evidence_id"])
         prompt["omitted_evidence_ids"].remove(item["evidence_id"])
@@ -86,18 +86,22 @@ def build_context(state, manifest, history, *, terminal_only=False, feedback=Non
         else:
             selected.append(item)
     visible = set(prompt["available_evidence_ids"])
+    if protected - visible and not _compact:
+        return build_context(state, manifest, history, terminal_only=terminal_only,
+                             feedback=feedback, dialogue=dialogue, _compact=True)
+    prompt["context_view"] = "compact" if _compact else "normal"
     if latest_ids.intersection(e["evidence_id"] for e in evidence) - visible:
         raise ContextAssemblyError("LATEST_TOOL_EVIDENCE_NOT_IN_CONTEXT", prompt)
     if protected - visible:
         raise ContextAssemblyError("REQUIRED_EVIDENCE_NOT_IN_CONTEXT", prompt)
-    for resource in manifest["resources"]:
+    for resource in ([] if terminal_only else manifest["resources"]):
         prompt["resources"].append(resource)
         if estimate(prompt) > INPUT_LIMIT - 450:
             prompt["resources"].pop()
             break
     # The same selector serves final-only diagnosis; it expands evidence before
     # runbooks instead of adding another summary model or a second evidence copy.
-    for index, item in enumerate(selected):
+    for index, item in enumerate([] if _compact else selected):
         short = prompt["evidence"][index]
         prompt["evidence"][index] = card_block(item, expanded=True)
         if estimate(prompt) > INPUT_LIMIT - 450:

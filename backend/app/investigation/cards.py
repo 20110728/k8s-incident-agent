@@ -130,12 +130,15 @@ def project(kind, data, truncated):
     if kind == "ToolObservation":
         # Older records contain JSON text rather than a typed payload. Never
         # salvage a cut JSON prefix or interpret a partial string as full facts.
-        if truncated or not isinstance(data.get("text"), str):
-            return {}, "unparsed", "TOOL_TEXT_INCOMPLETE_OR_MISSING"
-        try:
-            payload = json.loads(data["text"])
-        except (ValueError, TypeError):
-            return {}, "unparsed", "TOOL_TEXT_NOT_JSON"
+        if data.get("payload_complete") is True and isinstance(data.get("payload"), (dict, list)):
+            payload = data["payload"]
+        else:
+            if truncated or not isinstance(data.get("text"), str):
+                return {}, "unparsed", "TOOL_TEXT_INCOMPLETE_OR_MISSING"
+            try:
+                payload = json.loads(data["text"])
+            except (ValueError, TypeError):
+                return {}, "unparsed", "TOOL_TEXT_NOT_JSON"
         tool = data.get("tool")
         if tool == "pod_events" and isinstance(payload, list):
             return project("PodEvents", {"events": payload}, False)
