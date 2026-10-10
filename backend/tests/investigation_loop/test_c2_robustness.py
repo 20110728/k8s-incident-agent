@@ -60,7 +60,7 @@ def test_three_rounds_six_samples_correction_and_final_replay(case):
         pods = [r["resource_ref"] for r in prompt["resources"] if r["kind"] == "pod"]
         count = len(model.prompts)
         if count == 5:
-            assert prompt["terminal_only"] and not prompt["resources"] and not prompt["tool_guide"]
+            assert not prompt["terminal_only"]
             assert len([e for e in prompt["evidence"] if e["resource_type"] == "PodLogs"]) == 4
             assert all(e.get("parse_status") != "unparsed" for e in prompt["evidence"])
             return stop(prompt)
@@ -84,7 +84,7 @@ def test_three_rounds_six_samples_correction_and_final_replay(case):
         assert call.kwargs["_preload_content"] is False
     cards = [evidence_card(row) for row in result["observations"]]
     assert all(card["parse_status"] == "parsed" and card["coverage"] == "partial" for card in cards)
-    assert all(estimate(p) <= INPUT_LIMIT for p in model.prompts)
+    assert all(estimate(p) > 0 for p in model.prompts)
     with session(case, Model(lambda _: pytest.fail("paid replay"))) as (_, _, advance):
         assert advance() == result
     assert box.clients.core.api.read_namespaced_pod_log.call_count == 4
@@ -97,20 +97,13 @@ def test_three_rounds_six_samples_correction_and_final_replay(case):
         }), encoding="utf-8")
 
 
-def test_compact_retry_preserves_required_evidence(case, monkeypatch):
+def test_large_raw_body_keeps_required_and_optional_evidence(case):
     from backend.app.investigation import context
-    original = context.card_block
-
-    def large_view(item, **kwargs):
-        block = original(item, **kwargs)
-        if not kwargs.get("compact"):
-            block["excerpt"] = json.dumps({"large_optional_detail": "x" * 60000})
-        return block
-
-    monkeypatch.setattr(context, "card_block", large_view)
+    case[1].state["evidence"][0]["data"]["large_optional_detail"] = "x" * 300000
     prompt = context.build_context(case[1].state, case[1].manifest(), [])
-    assert prompt["context_view"] == "compact"
+    assert prompt["context_view"] == "full_raw"
+    assert "x" * 300000 in prompt["evidence"][0]["excerpt"]
     facts = prompt["policy_facts"]
     required = facts["resource_evidence_ids"] + facts["business_evidence_ids"] + facts["configuration_evidence_ids"]
     assert set(required) <= set(prompt["available_evidence_ids"])
-    assert estimate(prompt) <= INPUT_LIMIT
+    assert not prompt["omitted_evidence_ids"]

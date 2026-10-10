@@ -10,9 +10,15 @@ from uuid import uuid4
 from psycopg.types.json import Jsonb
 
 CURRENT = ContextVar("run_budget", default=None)
-POLICY = {"version": "investigation-budget-v4", "model_attempts": 6, "active_seconds": 300, "extra_seconds": 90,
-          "decisions": 3, "tools": 6, "input_tokens": 24000, "output_tokens": 4000, "total_tokens": 120000,
-          "write_reserve_seconds": 150}
+POLICY = {"version": "investigation-budget-v5-count-only", "model_attempts": 6,
+          "active_seconds": None, "extra_seconds": None, "decisions": 5, "tools": None,
+          "input_tokens": None, "output_tokens": None, "total_tokens": None,
+          "write_reserve_seconds": 0}
+
+
+def exceeds(value, limit):
+    return limit is not None and value > limit
+
 
 
 class BudgetExceeded(RuntimeError):
@@ -58,18 +64,18 @@ class RunBudget:
                         raise ValueError("REQUEST_INPUT_CHANGED")
                     return existing, False
             policy = data["policy"]
-            if decision_key and decision_key not in data["decisions"] and len(data["decisions"]) >= policy["decisions"]:
+            if decision_key and decision_key not in data["decisions"] and exceeds(len(data["decisions"]) + 1, policy["decisions"]):
                 error = "INVESTIGATION_DECISION_LIMIT"
             elif kind == "investigation_model" and sum(c["kind"] == kind for c in data["calls"].values()) >= policy.get("model_attempts", 5):
                 error = "MODEL_ATTEMPT_LIMIT"
             elif kind == "tool" and key in data["tools"]:
                 error = "DUPLICATE_TOOL_EVIDENCE"
-            elif kind == "tool" and len(data["tools"]) >= policy["tools"]:
+            elif kind == "tool" and exceeds(len(data["tools"]) + 1, policy["tools"]):
                 error = "TOOL_REQUEST_LIMIT"
-            elif (data["seconds"] + seconds + keep_seconds > policy["active_seconds"] or
-                  extra and data["extra_seconds"] + seconds > policy["extra_seconds"]):
+            elif (exceeds(data["seconds"] + seconds + keep_seconds, policy["active_seconds"]) or
+                  extra and exceeds(data["extra_seconds"] + seconds, policy["extra_seconds"])):
                 error = "ACTIVE_TIME_LIMIT"
-            elif data["tokens"] + tokens + keep_tokens > policy["total_tokens"]:
+            elif exceeds(data["tokens"] + tokens + keep_tokens, policy["total_tokens"]):
                 error = "MODEL_TOKEN_LIMIT"
             if error:
                 data["exhausted"] = error
@@ -105,7 +111,7 @@ class RunBudget:
             call.update(status=status, elapsed_seconds=elapsed, usage=usage, charged_tokens=tokens if tokens is not None else call["reserved_tokens"])
             if result is not None:
                 call["result"] = result
-            if data["seconds"] > data["policy"]["active_seconds"]:
+            if exceeds(data["seconds"], data["policy"]["active_seconds"]):
                 data["exhausted"] = "ACTIVE_TIME_LIMIT"
         if call["kind"] != "control_overhead":
             self.measured_seconds += elapsed
@@ -120,7 +126,7 @@ class RunBudget:
         with self.edit() as data:
             if key in data["decisions"]:
                 return  # Replayed interrupt preparation is not a new decision.
-            if len(data["decisions"]) >= data["policy"]["decisions"]:
+            if exceeds(len(data["decisions"]) + 1, data["policy"]["decisions"]):
                 error = data["exhausted"] = "INVESTIGATION_DECISION_LIMIT"
             else:
                 data["decisions"].append(key)
@@ -130,8 +136,8 @@ class RunBudget:
     def before_write(self, required=None):
         error = None
         with self.edit() as data:
-            if (data["policy"]["active_seconds"] - data["seconds"] < (required or data["policy"]["write_reserve_seconds"])
-                    or data["tokens"] > data["policy"]["total_tokens"]):
+            if (exceeds(data["seconds"] + (required or data["policy"]["write_reserve_seconds"]), data["policy"]["active_seconds"])
+                    or exceeds(data["tokens"], data["policy"]["total_tokens"])):
                 error = data["exhausted"] = "WRITE_VERIFICATION_BUDGET_NOT_RESERVED"
         if error:
             raise BudgetExceeded(error)
@@ -143,7 +149,7 @@ class RunBudget:
         start = time.monotonic()
         status = "failed_or_unknown"
         try:
-            with read_budget(seconds):
+            with read_budget(None):
                 yield
             status = "completed"
         finally:
@@ -187,9 +193,11 @@ def invoke_model(runnable, messages, schema):
     text = json.dumps([getattr(m, "content", m) for m in messages], ensure_ascii=False, default=str)
     schema_text = json.dumps(schema.model_json_schema(), ensure_ascii=False)
     estimated = ceil(len((text + schema_text).encode("utf-8")) / 3) + 512
-    if estimated > POLICY["input_tokens"]:
+    with budget.edit() as data:
+        policy = deepcopy(data["policy"])
+    if exceeds(estimated, policy["input_tokens"]):
         budget.deny("MODEL_INPUT_ESTIMATE_LIMIT")
-    ticket = budget.reserve("model", tokens=POLICY["input_tokens"] + POLICY["output_tokens"],
+    ticket = budget.reserve("model", tokens=(policy["input_tokens"] or 0) + (policy["output_tokens"] or 0),
         metadata={"input_estimate": estimated, "estimate_source": "utf8_bytes_div_3_plus_schema_and_512", "input_limit_is_estimated": True})
     try:
         response = runnable.invoke(messages)
@@ -229,7 +237,7 @@ def budget_view(repo, incident_id, run_id):
     return {"available": True, "run_id": run_id, "policy": policy,
         "accounting": {"reported_charge": known_charge, "estimated_or_reserved_charge": max(0, data["tokens"] - known_charge),
                        "embedding_charge": sum(charged(call) for call in calls if call["kind"] == "embedding"),
-                       "remaining": max(0, policy.get("total_tokens", 0) - data["tokens"])},
+                       "remaining": None if policy.get("total_tokens") is None else max(0, policy["total_tokens"] - data["tokens"])},
         "generation": {"attempts": len(models), "reported_tokens": sum(call["usage"]["total_tokens"] for call in reported),
             "unreported_attempts": len(models) - len(reported)},
         "used": {"active_seconds": data["seconds"], "extra_seconds": data["extra_seconds"], "tokens": data["tokens"],
@@ -237,5 +245,5 @@ def budget_view(repo, incident_id, run_id):
         "exhausted": data["exhausted"], "calls": calls,
         "handoff": {"reason": data["exhausted"],
             "known": "已完成的采集与诊断仍在本轮记录中；预算拒绝不会证明故障已消失。",
-            "unknown": "未完成、失败或截断的采集不能证明目标健康；丢失 usage 的模型调用保留预留额度。",
+            "unknown": "未完成、失败或截断的采集不能证明目标健康；缺失 usage 不代表零消耗。",
             "next_step": "核对本轮证据与操作账本，必要时人工排查或明确发起新一轮调查。"} if data["exhausted"] else None}

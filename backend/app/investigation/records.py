@@ -1,5 +1,6 @@
 """Replay and one shared correction slot, fenced by the existing run lease."""
 from copy import deepcopy
+from backend.app.runtime.budget import exceeds
 from hashlib import sha256
 import json
 
@@ -37,8 +38,8 @@ def correction(budget, request_id, *, diagnosis=False, tokens=0, seconds=0):
             return False
         if diagnosis and not existing:
             policy = data["policy"]
-            if (data["tokens"] + tokens > policy["total_tokens"]
-                    or data["seconds"] + seconds > policy["active_seconds"]
+            if (exceeds(data["tokens"] + tokens, policy["total_tokens"])
+                    or exceeds(data["seconds"] + seconds, policy["active_seconds"])
                     or sum(c["kind"] == "investigation_model" for c in data["calls"].values()) >= policy.get("model_attempts", 5)):
                 return False
         progress[key] = request_id

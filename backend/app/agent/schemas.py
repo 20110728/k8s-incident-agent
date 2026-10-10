@@ -62,8 +62,8 @@ class EvidenceItem(BaseModel):
 
 class DiagnosticFinding(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    summary: str = Field(min_length=1, max_length=1200)
-    evidence_ids: list[str] = Field(min_length=1, max_length=20)
+    summary: str = Field(min_length=1)
+    evidence_ids: list[str] = Field(min_length=1)
 
 
 class RootCauseHypothesis(DiagnosticFinding):
@@ -77,13 +77,13 @@ class DiagnosticAssessment(BaseModel):
         "deployment_configuration", "application_runtime", "dependency",
         "insufficient_evidence", "none",
     ]
-    symptoms: list[DiagnosticFinding] = Field(max_length=10)
-    root_cause_hypotheses: list[RootCauseHypothesis] = Field(max_length=5)
-    missing_evidence: list[str] = Field(max_length=10)
-    next_investigation: list[str] = Field(max_length=5)
+    symptoms: list[DiagnosticFinding] = Field()
+    root_cause_hypotheses: list[RootCauseHypothesis] = Field()
+    missing_evidence: list[str] = Field()
+    next_investigation: list[str] = Field()
     resource_status: Literal["ready", "not_ready", "unknown"]
     business_status: Literal["passed", "failed", "unknown"]
-    unverified_scope: list[str] = Field(min_length=1, max_length=10)
+    unverified_scope: list[str] = Field(min_length=1)
 
 
 class Diagnosis(BaseModel):

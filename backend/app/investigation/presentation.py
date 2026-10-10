@@ -16,14 +16,14 @@ def investigation_view(state):
     if state.get("workflow_version") != INVESTIGATION_WORKFLOW:
         return None
     steps = []
-    for entry in state.get("history", [])[:4]:
+    for entry in state.get("history", []):
         steps.append({"step": entry["step"], "action": text(entry.get("action"), 64),
             "reason": text(entry.get("reason")), "missing_fact": text(entry.get("missing_fact")),
             "evidence_ids": ids(entry.get("evidence_ids")),
             "results": [{"tool": text(result.get("tool"), 64), "coverage": text(result.get("coverage"), 64),
                 "error_code": text(result.get("error_code")), "evidence_ids": ids(result.get("evidence_ids")),
                 "generation": (result.get("sampling") or {}).get("generation", 0)}
-                for result in entry.get("results", [])[:2]]})
+                for result in entry.get("results", [])]})
     active = {item["evidence_id"] for item in state.get("evidence", [])}
     baseline = (state.get("baseline") or {}).get("evidence", [])
     rows = [(item, "baseline") for item in baseline] + [(item, "additional") for item in state.get("observations", [])]

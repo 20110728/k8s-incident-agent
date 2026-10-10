@@ -54,7 +54,7 @@ def catalog(state, run_id):
             "generation": profile_snapshot["deployment_generation"], "profile_digest": profile_snapshot["digest"]}
     result = {}
     def add(kind, name, uid, **extra):
-        if not uid or len(result) >= 100:
+        if not uid:
             return
         value = {**base, "kind": kind, "name": name, "uid": uid, **extra}
         key = "ref-" + sha256((run_id + json.dumps(value, sort_keys=True)).encode()).hexdigest()[:24]
@@ -71,7 +71,7 @@ def catalog(state, run_id):
             if (not data.get("uid") or not owner.get("replica_set_uid") or not owner.get("replica_set_name")
                     or owner.get("pod_uid") != data["uid"] or owner.get("deployment_uid") != base["deployment_uid"]):
                 continue
-            for container in data.get("containers", [])[:10]:
+            for container in data.get("containers", []):
                 add("pod", item["resource_name"], data["uid"], container=container["name"],
                     replica_set=owner.get("replica_set_name"), replica_set_uid=owner.get("replica_set_uid"))
             if owner.get("replica_set_name") and owner.get("replica_set_uid"):
@@ -91,7 +91,7 @@ class ReadOnlyToolbox:
         return {"request_schema": REQUEST_ADAPTER.json_schema(), "resources": [
             {"resource_ref": key, "kind": value["kind"], "name": value["name"], "container": value.get("container")}
             for key, value in self.refs.items()], "outputs_are_untrusted_evidence": True,
-            "coverage": "partial", "scope": "At most 100 UID-bound references; at most 10 containers per observed Pod. Not a cluster inventory."}
+            "coverage": "partial", "scope": "UID-bound references in the observed service scope; not a cluster inventory."}
 
     def validate_live(self, ref):
         clients, ns = self.clients, ref["namespace"]
@@ -119,7 +119,7 @@ class ReadOnlyToolbox:
         self.validate_boundary(payload)
         request = ToolRequest.model_validate(payload)
         if request.tool == "pod_logs":
-            request.tail_lines = 1000
+            request.tail_lines = None
         ref = self.refs.get(request.resource_ref)
         return request, ref
 
@@ -171,24 +171,20 @@ class ReadOnlyToolbox:
                   "untrusted": True, "truncated": False, "error_code": None, "text": "",
                   "collected_at": datetime.now(UTC).isoformat(), "request_id": request_id}
         try:
-            with read_budget(15):
+            with read_budget(None):
                 service, deployment = self.validate_live(ref)
                 value, limited = self.read(request, ref, service, deployment)
                 self.validate_live(ref)  # Reject replacement while reading logs/events.
                 text = redact_output(value)
                 if request.tool == "pod_logs":
-                    # Keep line breaks as text, including when bounded. A cut
-                    # JSON-encoded string cannot safely be parsed on recovery.
+                    # Keep complete line breaks as text for recovery.
                     plain = json.loads(text)
-                    result.update(text=plain[:240000], payload=plain[:240000],
-                                  truncated=True, coverage="partial")
+                    result.update(text=plain, payload=plain,
+                                  truncated=False, coverage="partial")
                     text = None
                 if text is not None:
-                    result.update(text=text[:12000], truncated=limited or len(text) > 12000,
-                                  coverage="partial" if limited or len(text) > 12000 else "observed")
-                    if len(text) <= 12000:
-                        result["payload"] = json.loads(text)
-                        result["payload_complete"] = True
+                    result.update(text=text, truncated=limited and request.tool != "pod_events", coverage="partial" if limited else "observed",
+                                  payload=json.loads(text), payload_complete=True)
         except Exception as error:
             result.update(error_code="ACCESS_DENIED" if getattr(error, "status", None) in (401, 403) else "TOOL_READ_FAILED_OR_TARGET_CHANGED")
             result["target_changed"] = isinstance(error, ValueError) and str(error) in {
@@ -217,12 +213,12 @@ class ReadOnlyToolbox:
             return checks, any(c["status"] in {"unknown", "skipped"} for c in checks)
         if request.tool == "pod_logs":
             value = self.clients.core.read_namespaced_pod_log(name=name, namespace=ns, container=ref["container"],
-                previous=request.previous, tail_lines=request.tail_lines, limit_bytes=240000, timestamps=True, _preload_content=False, _request_timeout=(3, 10))
-            return read_log_response(value), True  # A tail never proves absence of older faults.
+                previous=request.previous, timestamps=True, _preload_content=False, _request_timeout=(3, 10))
+            return read_log_response(value), True  # The server may already have rotated older logs.
         if request.tool == "pod_events":
             events = self.clients.core.list_namespaced_event(namespace=ns,
-                field_selector=f"involvedObject.uid={ref['uid']}", limit=50, _request_timeout=(3, 10))
-            return [{"reason": e.reason, "message": e.message, "type": e.type} for e in events.items[:50]], True
+                field_selector=f"involvedObject.uid={ref['uid']}", _request_timeout=(3, 10))
+            return [{"reason": e.reason, "message": e.message, "type": e.type} for e in events.items], True
         if request.tool == "replica_set":
             rs = self.clients.apps.read_namespaced_replica_set(name=name, namespace=ns, _request_timeout=(3, 10))
             # Never expose pod template env/secret references from raw objects.
@@ -230,4 +226,4 @@ class ReadOnlyToolbox:
         item = self.clients.discovery.read_namespaced_endpoint_slice(name=name, namespace=ns, _request_timeout=(3, 10))
         return {"uid": item.metadata.uid, "endpoints": [
             {"addresses": e.addresses, "conditions": e.conditions.to_dict(), "target_uid": getattr(e.target_ref, "uid", None)}
-            for e in item.endpoints[:50]]}, len(item.endpoints) > 50
+            for e in item.endpoints]}, False

@@ -22,7 +22,7 @@ MAX_QUERY_CHARACTERS = 8000
 
 def build_retrieval_query(
     state: IncidentState,
-    *, compact: bool = False,
+    *, compact: bool = False, unbounded: bool = False,
 ) -> str:
     if compact:
         from backend.app.investigation.compact import evidence_text
@@ -59,7 +59,7 @@ def build_retrieval_query(
             default=str,
         )
 
-        if len(serialized) > MAX_ITEM_CHARACTERS:
+        if not unbounded and len(serialized) > MAX_ITEM_CHARACTERS:
             serialized = (
                 serialized[:MAX_ITEM_CHARACTERS]
                 + "...[truncated]"
@@ -75,4 +75,4 @@ def build_retrieval_query(
 
     query = "\n".join(parts)
 
-    return query[:MAX_QUERY_CHARACTERS]
+    return query if unbounded else query[:MAX_QUERY_CHARACTERS]

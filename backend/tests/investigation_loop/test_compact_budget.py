@@ -17,79 +17,57 @@ from backend.tests.investigation_loop.test_context_feedback import crowd_baselin
 
 def test_new_policy_and_existing_budget_snapshot_are_distinct(case):
     budget = case[0]
-    assert POLICY["total_tokens"] == 120000
+    assert POLICY["total_tokens"] is None and POLICY["decisions"] == 5
+    assert POLICY["model_attempts"] == 6
     with budget.edit() as data:
-        assert data["policy"]["total_tokens"] == 120000
+        assert data["policy"]["total_tokens"] is None
         data["policy"].update(version="investigation-budget-v1", total_tokens=40000)
     with RunBudget(budget.repo, budget.lease).edit() as data:
         assert data["policy"]["total_tokens"] == 40000
-    assert POLICY["total_tokens"] == 120000
+    assert POLICY["total_tokens"] is None
 
 
-@pytest.mark.parametrize("limit,used", [(60000, 16000), (120000, 76000)])
-def test_remaining_budget_routes_directly_to_final_without_double_reservation(case, limit, used):
+def test_large_usage_time_and_many_tools_do_not_block_new_run(case):
     budget, box, _ = case
-    with budget.edit() as data:
-        data["policy"]["total_tokens"] = limit
-    budget.reserve("embedding", tokens=used)
-    def choose(prompt):
-        assert prompt["terminal_only"]
-        return stop(prompt)
-    model = Model(choose)
+    budget.reserve("embedding", seconds=10000, tokens=1000000)
+    for n in range(10):
+        budget.reserve("tool", seconds=1000, extra=True, key=f"prior-{n}")
+    model = Model(lambda prompt: collect(prompt) if not prompt["history"] else stop(prompt))
     with session(case, model) as (_, _, advance):
         result = advance()
-    assert result["output"]["status"] == "stop" and len(model.prompts) == 1
-    assert not result["observations"]
-    box.clients.core.api.read_namespaced_pod_log.assert_not_called()
+    assert result["output"]["status"] == "stop" and len(model.prompts) == 2
+    assert not any(p["terminal_only"] for p in model.prompts)
+    assert len(result["observations"]) == 1
     with budget.edit() as data:
-        calls = [c for c in data["calls"].values() if c["kind"] == "investigation_model"]
-        assert len(calls) == 1 and calls[0]["metadata"]["purpose"] == "terminal"
-        assert data["exhausted"] is None and data["tokens"] == used + 120
-    with session(case, Model(lambda _: pytest.fail("paid final replay"))) as (_, _, advance):
+        assert data["tokens"] > 1000000 and data["exhausted"] is None
+    budget.before_write()
+    with session(case, Model(lambda _: pytest.fail("paid replay"))) as (_, _, advance):
         assert advance() == result
 
 
-def test_correction_switches_to_final_only_after_cost_settlement(case):
+def test_correction_not_forced_to_final_by_token_cost(case):
     budget = case[0]
-    with budget.edit() as data:
-        data["policy"]["total_tokens"] = 94000
-    budget.reserve("embedding", tokens=20000)
-    class PaidModel(Model):
-        def invoke(self, prompt):
-            result = super().invoke(prompt)
-            result["usage"] = {"total_tokens": 6000}
-            return result
+    budget.reserve("embedding", tokens=1000000)
     def choose(prompt):
-        if not prompt["feedback"]:
-            assert not prompt["terminal_only"]
-            return {**stop(prompt), "evidence_ids": ["ev-invented"]}
-        assert prompt["terminal_only"]
-        return stop(prompt)
-    model = PaidModel(choose)
+        assert not prompt["terminal_only"]
+        return stop(prompt) if prompt["feedback"] else {**stop(prompt), "evidence_ids": ["ev-invented"]}
+    model = Model(choose)
     with session(case, model) as (_, _, advance):
         result = advance()
     assert result["output"]["status"] == "stop" and len(model.prompts) == 2
     with budget.edit() as data:
-        assert data["tokens"] == 32000 and data["exhausted"] is None
+        assert data["tokens"] == 1000240 and data["exhausted"] is None
 
 
-def test_final_only_still_rejects_invented_citations(case):
+def test_removed_cost_limit_does_not_allow_invented_citations(case):
     budget, box, _ = case
-    budget.reserve("embedding", tokens=76000)
+    budget.reserve("embedding", tokens=1000000)
     model = Model(lambda prompt: {**stop(prompt), "evidence_ids": ["ev-invalid"]})
     with session(case, model) as (_, _, advance):
         result = advance()
     assert result["output"]["stop_reason"] == "DECISION_VALIDATION_FAILED"
-    assert all(p["terminal_only"] for p in model.prompts) and len(model.prompts) == 2
+    assert len(model.prompts) == 2
     box.clients.core.api.read_namespaced_pod_log.assert_not_called()
-
-
-def test_cannot_afford_one_final_call_never_invokes_provider(case):
-    budget = case[0]
-    budget.reserve("embedding", tokens=102000)
-    with session(case, Model(lambda _: pytest.fail("unfunded model call"))) as (_, _, advance):
-        result = advance()
-    assert result["output"]["stop_reason"] == "MODEL_TOKEN_LIMIT"
 
 
 def test_all_prior_samples_and_core_baseline_remain_after_next_batch(case):
@@ -112,8 +90,8 @@ def test_all_prior_samples_and_core_baseline_remain_after_next_batch(case):
     assert {s["evidence_id"] for s in samples} <= visible
     facts = prompt["policy_facts"]
     assert set(facts["business_evidence_ids"] + facts["configuration_evidence_ids"] + facts["resource_evidence_ids"]) <= visible
-    assert estimate(prompt) <= INPUT_LIMIT
-    assert all(len(h["reason"]) <= 120 and "missing_fact" not in h for h in prompt["history"])
+    assert estimate(prompt) > 0
+    assert prompt["history"] == history
 
 
 def test_logs_group_exact_messages_and_retrieval_is_byte_bounded(case):

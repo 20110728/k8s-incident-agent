@@ -6,7 +6,7 @@ from psycopg.types.json import Jsonb
 
 from backend.app.persistence.operations import OperationRepository, json_value
 from backend.app.persistence.runs import RunError, request_digest, validate_key
-from backend.app.services.round_context import build_round_context, selected_workflow
+from backend.app.services.round_context import build_round_context, selected_workflow, INVESTIGATION_WORKFLOW
 
 
 class RoundConflict(RunError):
@@ -78,9 +78,12 @@ class RoundRepository(OperationRepository):
                     raise RoundConflict()
                 if conn.execute("SELECT 1 FROM incident_agent_app.runs WHERE source_message_id=%s", (message_id,)).fetchone():
                     raise RoundConflict()
+                workflow = selected_workflow()
+                full = workflow == INVESTIGATION_WORKFLOW
+                history_limit = "" if full else " LIMIT 11"
                 messages = conn.execute("""SELECT * FROM incident_agent_app.messages WHERE incident_id=%s AND sequence<=%s
-                    AND role='user' ORDER BY sequence DESC LIMIT 11""", (incident_id, message["sequence"])).fetchall()
-                context = build_round_context(messages, previous, parent_run_id, incident["thread_id"])
+                    AND role='user' ORDER BY sequence DESC""" + history_limit, (incident_id, message["sequence"])).fetchall()
+                context = build_round_context(messages, previous, parent_run_id, incident["thread_id"], full=full)
                 payload = {key: incident[key] for key in ("namespace", "service_name", "description")}
                 run_id, thread_id = str(uuid4()), str(uuid4())
                 row = conn.execute("""INSERT INTO incident_agent_app.runs
@@ -89,7 +92,7 @@ class RoundRepository(OperationRepository):
                      source_message_id,input_message_sequence,context_snapshot,context_sha256,event_revision)
                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
                     (run_id, incident_id, thread_id, parent_run_id,
-                     latest["input_revision"] + 1 if latest else 1, Jsonb(payload), request_digest(payload), selected_workflow(),
+                     latest["input_revision"] + 1 if latest else 1, Jsonb(payload), request_digest(payload), workflow,
                      "incident-round:" + incident_id, key, digest, message_id, message["sequence"],
                      Jsonb(context), request_digest(context), incident["event_revision"])).fetchone()
                 # Old terminal output is frozen before the new run becomes visible.

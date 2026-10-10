@@ -31,7 +31,7 @@ def test_collection_and_diagnosis_have_separate_correction_then_finish(case, cor
             return {"action": "collect", "reason": "Inspect evidence", "missing_fact": "Readiness failure cause",
                     "evidence_ids": prompt["available_evidence_ids"][:1], "requests": [request]}
         value = conclusion(prompt, "unknown")
-        assert prompt["terminal_only"]
+        assert prompt["terminal_only"] == (n == 6)
         if n == 5 or not corrected:
             value["diagnosis"].update(fault_category="application_error", root_cause="UNSUPPORTED_MODEL_CAUSE")
             value["diagnosis"]["assessment"]["problem_domain"] = "application_runtime"

@@ -144,17 +144,25 @@ def test_entire_batch_is_validated_before_any_tool(case):
     case[1].clients.core.api.read_namespaced_pod_log.assert_not_called()
 
 
-def test_three_collections_allow_terminal_summary_but_no_fourth_tool(case):
+def test_five_collections_allow_terminal_summary_but_no_sixth_collection(case):
     def choose(prompt):
         if prompt["terminal_only"]:
             return stop(prompt)
         n = len(prompt["history"])
-        return collect(prompt, tool="pod_events" if n == 2 else "pod_logs", previous=n == 1)
+        return collect(prompt, tool="pod_events" if n == 4 else "pod_logs", previous=n in {2, 3}, index=n % 2)
     model = Model(choose)
     result = run(case, model)
-    assert result["output"]["status"] == "stop" and len(model.prompts) == 4
+    assert result["output"]["status"] == "stop" and len(model.prompts) == 6
     assert model.prompts[-1]["terminal_only"]
-    assert len(result["observations"]) == 3
+    assert len(result["observations"]) == 5
+    assert all(not p["terminal_only"] for p in model.prompts[:-1])
+    with case[0].edit() as data:
+        assert len(data["decisions"]) == 5
+    replay = run(case, Model(lambda _: pytest.fail("paid replay")))
+    assert replay == result
+    if os.environ.get("INCIDENT_AGENT_TEST_AUDIT_DIR"):
+        (Path(os.environ["INCIDENT_AGENT_TEST_AUDIT_DIR"]) / "count-only.json").write_text(
+            json.dumps({"collection_rounds": 5, "model_calls": 6, "final_only": True, "replay": "passed"}), encoding="utf-8")
 
 
 def test_one_correction_is_shared_across_the_run(case):
@@ -244,9 +252,9 @@ def test_context_remains_valid_bounded_json_and_only_lists_visible_evidence(case
         box.state["evidence"].append({"evidence_id": f"ev-large-{n:03d}", "resource_type": "PodEvents",
             "resource_name": str(n), "data": {"text": "x" * 30000}, "error": None})
     prompt = build_context(box.state, box.manifest(), [])
-    assert json.loads(json.dumps(prompt)) == prompt and estimate(prompt) <= INPUT_LIMIT
+    assert json.loads(json.dumps(prompt)) == prompt and estimate(prompt) > 0
     assert set(prompt["available_evidence_ids"]) == {e["evidence_id"] for e in prompt["evidence"]}
-    assert prompt["omitted_evidence_ids"]
+    assert not prompt["omitted_evidence_ids"]
 
 
 def test_failed_business_refresh_cannot_leave_old_pass_as_current(case):
@@ -330,21 +338,18 @@ def test_target_change_stops_before_second_request_in_batch(case):
     box.clients.core.api.list_namespaced_event.assert_not_called()
 
 
-def test_missing_usage_retains_reservations_and_protects_final_headroom(case):
+def test_missing_usage_still_counts_toward_six_attempt_limit(case):
     budget, box, _ = case
-    with budget.edit() as data:
-        data["policy"].update(version="test-budget", total_tokens=142000)
     prompt = build_context(box.state, box.manifest(), [])
     model = Mock()
     model.invoke.return_value = {"parsed": {"decision": stop(prompt)}, "usage": {}}
-    for n in range(3):
+    for n in range(6):
         call_model(model, budget, prompt, f"unknown-usage-{n}")
-    with pytest.raises(BudgetExceeded, match="MODEL_TOKEN_LIMIT"):
-        call_model(model, budget, prompt, "no-headroom")
-    assert model.invoke.call_count == 3
-    call_model(model, budget, prompt, "terminal", terminal=True)
+    with pytest.raises(BudgetExceeded, match="MODEL_ATTEMPT_LIMIT"):
+        call_model(model, budget, prompt, "seventh")
+    assert model.invoke.call_count == 6
     with budget.edit() as data:
-        assert data["tokens"] == 140000
+        assert all(c["usage"] is None for c in data["calls"].values())
 
 
 def test_ask_is_explicit_handoff_without_human_interrupt_or_write(case):

@@ -207,9 +207,9 @@ def test_pod_logs_are_truncated():
         tail_lines=10_000,
     )
 
-    assert result.truncated is True
-    assert len(result.content) == 240_000
+    assert result.truncated is False
+    assert len(result.content) == 250_000
 
     call_arguments = clients.core.read_namespaced_pod_log.call_args.kwargs
 
-    assert call_arguments["tail_lines"] == 1000
+    assert "tail_lines" not in call_arguments and "limit_bytes" not in call_arguments

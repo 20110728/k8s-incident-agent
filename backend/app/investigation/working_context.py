@@ -6,11 +6,11 @@ from backend.app.investigation.cards import evidence_card, clean, VERSION as CAR
 from backend.app.investigation.records import digest
 from backend.app.tools.investigation import redact_output
 
-VERSION = "investigation-context-v2.5-raw"
+VERSION = "investigation-context-v3-full"
 
 
-def text(value, limit):
-    return json.loads(redact_output(str(value or "")))[:limit]
+def text(value):
+    return json.loads(redact_output(str(value or "")))
 
 
 def human_context(dialogue):
@@ -26,9 +26,8 @@ def human_context(dialogue):
         fields = ("question_id", "version", "message_id", "slot", "accepted_at", "skip", "changed_resource_refs")
         value = {k: deepcopy(answer[k]) for k in fields if k in answer}
         raw = json.loads(redact_output(str(answer.get("text") or "")))
-        marker = "\n...[omitted]...\n"
-        excerpt = raw if len(raw) <= 600 else raw[:400] + marker + raw[-(200 - len(marker)):]
-        value.update(text=excerpt, text_truncated=len(raw) > 600, source="user_supplied_unverified")
+        excerpt = raw
+        value.update(text=excerpt, text_truncated=False, source="user_supplied_unverified")
         answers.append(value)
     return {"answers": answers, "asked_slots": list(dict.fromkeys(dialogue.get("asked_slots", []))),
             "freshness_seconds": dialogue.get("freshness_seconds", {})}
@@ -46,11 +45,11 @@ def historical_context(state, human):
         if mid and mid in seen:
             continue
         seen.add(mid)
-        messages.append({"message_id": mid, "content": text(message.get("content"), 200), "excerpt": True})
+        messages.append({"message_id": mid, "content": text(message.get("content")), "excerpt": bool(message.get("truncated"))})
     previous = source.get("previous_result") or {}
     return {"usage": "Historical background and hypotheses; never current evidence or approval.",
-            "messages": messages[-5:], "omitted_messages": len(source.get("messages", [])) - len(messages[-5:]),
-            "previous_result": {k: text(previous.get(k), 400) for k in ("phase", "diagnosis_excerpt", "verification_excerpt")}}
+            "messages": messages, "omitted_messages": 0, "older_messages_omitted": bool(source.get("older_messages_omitted")),
+            "previous_result": {k: text(previous.get(k)) for k in ("phase", "diagnosis_excerpt", "verification_excerpt")}}
 
 
 def working_state(state, facts, human):
@@ -170,22 +169,13 @@ def model_fields(card):
     return fields
 
 
-def raw_block(item, text_limit=None):
-    """Original saved fields, redacted; log clipping is explicit, never a summary."""
+def raw_block(item):
+    """Full saved body after redaction; source truncation remains explicit metadata."""
     block = card_block(item)
     data = clean(deepcopy(item.get("data", {})))
-    clipped = False
     if isinstance(data, dict) and "payload" in data and data.get("payload_complete"):
-        data.pop("text", None)
-    if isinstance(data, dict) and text_limit is not None:
-        for key in ("content", "text"):
-            value = data.get(key)
-            if isinstance(value, str) and len(value) > text_limit:
-                half = text_limit // 2
-                data[key] = value[:half] + "\n...[input budget: middle omitted]...\n" + value[-half:]
-                clipped = True
+        data.pop("text", None)  # Omit the duplicate serialization, not evidence.
     block.update(excerpt=json.dumps(data, sort_keys=True, ensure_ascii=False, separators=(",", ":")),
-                 projection="saved-evidence-raw-v1", excerpt_truncated=clipped,
-                 input_body_clipped=clipped)
+                 projection="saved-evidence-raw-v1", excerpt_truncated=False, input_body_clipped=False)
     block.pop("projection_omitted", None)
     return block

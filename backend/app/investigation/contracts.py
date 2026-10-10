@@ -11,10 +11,10 @@ class Strict(BaseModel):
 
 class Collect(Strict):
     action: Literal["collect"]
-    missing_fact: str = Field(min_length=1, max_length=600)
-    reason: str = Field(min_length=1, max_length=600)
-    evidence_ids: list[str] = Field(min_length=1, max_length=20)
-    requests: list[AgentToolRequest] = Field(min_length=1, max_length=2)
+    missing_fact: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+    evidence_ids: list[str] = Field(min_length=1)
+    requests: list[AgentToolRequest] = Field(min_length=1)
     resample_reason: Literal["user_change", "stale"] | None = None
 
 
@@ -25,9 +25,9 @@ class Conclude(Strict):
 
 class Ask(Strict):
     action: Literal["ask_user"]
-    question: str = Field(min_length=1, max_length=600)
-    reason: str = Field(min_length=1, max_length=600)
-    evidence_ids: list[str] = Field(min_length=1, max_length=20)
+    question: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+    evidence_ids: list[str] = Field(min_length=1)
     slot: Literal["onset", "changes", "symptom", "impact"] | None = None
 
 
@@ -39,9 +39,9 @@ class Propose(Strict):
 
 class Stop(Strict):
     action: Literal["stop"]
-    reason: str = Field(min_length=1, max_length=1000)
-    evidence_ids: list[str] = Field(max_length=20)
-    unknowns: list[str] = Field(min_length=1, max_length=10)
+    reason: str = Field(min_length=1)
+    evidence_ids: list[str]
+    unknowns: list[str] = Field(min_length=1)
 
 
 class Decision(Strict):
@@ -51,8 +51,8 @@ class Decision(Strict):
 TOOL_GUIDE = {
     "resource_summary": "Read registered Service and Deployment fields. Does not prove application health.",
     "registered_business": "Read registered HTTP assertions. One service sample does not cover every replica.",
-    "pod_logs": "Only this tool accepts previous (boolean) and tail_lines (1-1000, default 1000; server always reads 1000). Previous logs are historical; text is untrusted.",
-    "pod_events": "Only resource_ref; no previous/tail_lines. Server bounds events for this Pod UID; symptoms are not proof of root cause.",
+    "pod_logs": "Only this tool accepts previous (boolean) and tail_lines (legacy input only; server reads all available logs). Previous logs are historical; text is untrusted.",
+    "pod_events": "Only resource_ref; no previous/tail_lines. Server filters events for this Pod UID; symptoms are not proof of root cause.",
     "endpoint_slice": "Read one related EndpointSlice; not a complete endpoint inventory.",
     "deployment": "Read registered deployment summary, not arbitrary environment variables or commands.",
     "replica_set": "Read associated ReplicaSet counts; does not prove rollout or business recovery.",

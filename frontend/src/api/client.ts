@@ -288,7 +288,8 @@ export class ApiClient {
         const used = v.used, policy = v.policy
         return isRecord(used) && isRecord(policy)
           && ['active_seconds', 'extra_seconds', 'tokens', 'decisions', 'tools'].every(k => typeof used[k] === 'number')
-          && ['active_seconds', 'extra_seconds', 'total_tokens', 'decisions', 'tools'].every(k => typeof policy[k] === 'number')
+          && typeof policy.decisions === 'number'
+          && ['active_seconds', 'extra_seconds', 'total_tokens', 'tools'].every(k => policy[k] === null || typeof policy[k] === 'number')
       })
   }
   listMessages(id: string, before?: number): Promise<SequencePage<Message>> {

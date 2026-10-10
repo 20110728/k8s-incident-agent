@@ -62,7 +62,7 @@ def test_three_rounds_then_invalid_category_corrects_to_grounded_unknown(case):
             return {"action": "collect", "reason": "Check current logs, events and previous instance",
                     "missing_fact": "Cause of readiness failure", "evidence_ids": prompt["available_evidence_ids"][:1],
                     "requests": [request]}
-        assert prompt["terminal_only"]
+        assert prompt["terminal_only"] == (n == 5)
         value = conclusion(prompt, "unknown")
         if n == 4:
             value["diagnosis"]["fault_category"] = "readiness_probe_error"

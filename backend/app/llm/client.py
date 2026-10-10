@@ -16,9 +16,8 @@ def build_chat_model(
         ),
         base_url=settings.dashscope_base_url,
         temperature=0,
-        timeout=min(settings.llm_timeout_seconds, 60) if budgeted else settings.llm_timeout_seconds,
+        timeout=settings.llm_timeout_seconds,
         max_retries=0 if budgeted else settings.llm_max_retries,
-        **({"max_tokens": 2000} if budgeted else {}),
         extra_body={
             "enable_thinking": False,
         },

@@ -13,6 +13,8 @@ def can_expand_logs(data, semantic_key, request):
     prior = [c for c in data.get("calls", {}).values() if c["kind"] == "tool"
              and c.get("metadata", {}).get("semantic_key") == semantic_key]
     return bool(request.get("tool") == "pod_logs" and prior
+                and request.get("tail_lines") is not None
+                and all(c.get("metadata", {}).get("request", {}).get("tail_lines") is not None for c in prior)
                 and all(c.get("result") and not c["result"].get("error_code")
                         and c["result"].get("coverage") != "unknown" for c in prior)
                 and request.get("tail_lines", 100) > max(c["metadata"]["request"].get("tail_lines", 100) for c in prior)

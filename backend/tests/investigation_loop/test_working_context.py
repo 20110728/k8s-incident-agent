@@ -27,7 +27,7 @@ def test_answer_binding_deduplicates_history_without_reclassifying_claim():
     assert raw == before and len(human["answers"]) == 1
     saved = human["answers"][0]
     assert saved["question_id"] == "q1" and saved["slot"] == "changes"
-    assert saved["text_truncated"] and len(saved["text"]) == 600
+    assert not saved["text_truncated"] and saved["text"] == answer["text"]
     assert saved["source"] == "user_supplied_unverified"
     history = historical_context({"round_context": {"messages": [
         {"message_id": "m1", "content": answer["text"]}, {"message_id": "m2", "content": "old hypothesis"}]}}, human)
@@ -81,8 +81,8 @@ def test_card_context_is_valid_json_single_representation_and_round_trip_stable(
         row["data"]["irrelevant_padding"] = "UNNEEDED-BODY" * 10000
     original = deepcopy(current)
     prompt = build_context(current, case[1].manifest(), [])
-    assert estimate(prompt) <= INPUT_LIMIT and current == original
-    assert "UNNEEDED-BODY" not in json.dumps(prompt)
+    assert estimate(prompt) > 0 and current == original
+    assert "UNNEEDED-BODY" in json.dumps(prompt)
     assert all(e["projection"] in {"evidence-card-v1", "saved-evidence-raw-v1"} and json.loads(e["excerpt"]) for e in prompt["evidence"])
     assert len(prompt["available_evidence_ids"]) == len(set(prompt["available_evidence_ids"]))
     with storage[0]() as connection:
@@ -114,12 +114,25 @@ def test_paid_call_replays_and_persists_selection_without_raw_bodies(case):
         assert all("excerpt" not in item for item in metadata["selection"])
 
 
-def test_required_context_failure_is_saved_without_paid_attempt(case, monkeypatch):
+def test_old_input_limit_no_longer_discards_evidence_or_blocks_provider(case, monkeypatch):
     from backend.app.investigation import context
     monkeypatch.setattr(context, "INPUT_LIMIT", 1)
-    result = run(case, Model(lambda _: pytest.fail("model called with missing required input")))
-    assert result["output"]["stop_reason"] == "REQUIRED_EVIDENCE_NOT_IN_CONTEXT"
+    model = Model(stop)
+    result = run(case, model)
+    assert result["output"]["status"] == "stop" and len(model.prompts) == 1
+    assert not model.prompts[0]["omitted_evidence_ids"]
     with case[0].edit() as data:
-        assert not any(c["kind"] == "investigation_model" for c in data["calls"].values())
-        failures = list(data["context_assembly_failures"].values())
-        assert len(failures) == 1 and failures[0]["omitted_ids"]
+        assert not data.get("context_assembly_failures")
+
+
+def test_new_investigation_history_snapshot_preserves_all_message_text():
+    from datetime import datetime, UTC
+    from backend.app.services.round_context import build_round_context
+    messages = [{"message_id": f"m{n}", "sequence": n, "source": "user", "created_at": datetime.now(UTC),
+                 "content": "historical claim " * 1000} for n in range(12, 0, -1)]
+    previous = {"diagnosis": {"root_cause": "old hypothesis " * 1000}}
+    saved = build_round_context(messages, previous, "prior", "legacy", full=True)
+    assert len(saved["messages"]) == 12 and not saved["older_messages_omitted"]
+    assert all(not m["truncated"] and m["content"] == messages[0]["content"] for m in saved["messages"])
+    assert json.loads(saved["previous_result"]["diagnosis_excerpt"]) == previous["diagnosis"]
+    assert "never current evidence" in historical_context({"round_context": saved}, None)["usage"]

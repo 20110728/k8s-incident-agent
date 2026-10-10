@@ -8,6 +8,9 @@ _deadline = ContextVar("observation_deadline", default=None)
 
 @contextmanager
 def read_budget(seconds):
+    if seconds is None:
+        yield
+        return
     end = time.monotonic() + seconds
     current = _deadline.get()
     token = _deadline.set(min(current, end) if current is not None else end)

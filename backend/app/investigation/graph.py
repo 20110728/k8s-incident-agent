@@ -108,7 +108,7 @@ def validate_decision(value, prompt, current, toolbox, terminal):
         result["requests"] = [ToolRequest.model_validate(r).model_dump() for r in result["requests"]]
         for request in result["requests"]:
             if request["tool"] == "pod_logs":
-                request["tail_lines"] = 1000
+                request["tail_lines"] = None
     return result
 
 
@@ -144,7 +144,7 @@ def build_investigation_graph(budget, toolbox, model, *, checkpointer=None, inte
     def decide(state):
         check_version(state)
         step = state["step"] + 1
-        terminal = step > 3
+        terminal = step > 5
         request_id = f"{prefix}:{'final' if terminal else 'decision'}:{step}"
         current = current_state(state["baseline"], state["observations"])
         feedback = None

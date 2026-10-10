@@ -16,6 +16,18 @@ describe('6A budget visibility', () => {
     expect(text).toContain('不代表精确费用')
     expect(text).toContain('人工排查')
   })
+  it('accepts unlimited policy and renders it without zero or missing budget', async () => {
+    const value = { available: true, run_id: 'run',
+      policy: { active_seconds: null, extra_seconds: null, total_tokens: null, tools: null, decisions: 5 },
+      used: { active_seconds: 20, extra_seconds: 1, tokens: 300000, tools: 12, decisions: 5 },
+      accounting: { reported_charge: 300000, estimated_or_reserved_charge: 0, embedding_charge: 0, remaining: null } }
+    const api = new ApiClient({ fetcher: vi.fn(async () => new Response(JSON.stringify(value))) })
+    const result = await api.getRunBudget('incident', 'run')
+    expect(result.policy?.total_tokens).toBeNull()
+    const text = renderToStaticMarkup(<BudgetDetails value={result} />)
+    expect(text).toContain('不限')
+    expect(text).not.toContain('NaN')
+  })
   it('uses read-only incident/run scoped API and rejects malformed counters', async () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify({ available: false, run_id: 'run' })))
     const api = new ApiClient({ fetcher })

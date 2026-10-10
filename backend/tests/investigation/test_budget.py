@@ -21,7 +21,13 @@ from backend.tests.runtime.test_operations_postgres import operation_case
 def budget(storage):
     repo = ControlRepository(storage[0])
     accept(repo)
-    return RunBudget(repo, repo.claim("budget-test", 60))
+    result = RunBudget(repo, repo.claim("budget-test", 60))
+    # These cases exercise persisted legacy ceilings, not the new count-only policy.
+    with result.edit() as data:
+        data["policy"].update(version="investigation-budget-v1", active_seconds=300, extra_seconds=90,
+                              total_tokens=60000, input_tokens=12000, output_tokens=2000,
+                              decisions=3, tools=6, write_reserve_seconds=150)
+    return result
 
 
 def view(budget):
@@ -171,6 +177,8 @@ def test_prepared_patch_is_not_dispatched_without_remaining_verification_time(op
     from backend.app.runtime.operations import LedgerExecutor
     _, repo, state, lease, kube = operation_case
     budget = RunBudget(repo, lease)
+    with budget.edit() as data:
+        data["policy"].update(version="investigation-budget-v1", active_seconds=300, write_reserve_seconds=150)
     budget.reserve("earlier_activity", 181)
     with bind_budget(budget), pytest.raises(BudgetExceeded):
         LedgerExecutor(kube.clients, repo, lease).execute(state)
@@ -209,7 +217,7 @@ def test_langgraph_nodes_receive_durable_budget_context(budget):
     assert view(budget)["used"]["tokens"] == 14000
 
 
-def test_budgeted_sdk_construction_bounds_output_and_disables_retries(monkeypatch):
+def test_budgeted_sdk_omits_output_cap_and_disables_retries(monkeypatch):
     from backend.app.llm import client
     from backend.app.rag import embeddings
     chat, embedding = Mock(), Mock()
@@ -222,6 +230,6 @@ def test_budgeted_sdk_construction_bounds_output_and_disables_retries(monkeypatc
         client.build_chat_model(settings)
         embeddings.build_embeddings(settings)
     assert chat.call_args.kwargs["max_retries"] == 0
-    assert chat.call_args.kwargs["timeout"] == 60 and chat.call_args.kwargs["max_tokens"] == 2000
+    assert chat.call_args.kwargs["timeout"] == 90 and "max_tokens" not in chat.call_args.kwargs
     assert embedding.call_args.kwargs["max_retries"] == 0
     assert embedding.call_args.kwargs["request_timeout"] == 25

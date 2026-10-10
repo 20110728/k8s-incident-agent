@@ -14,10 +14,7 @@ def read_log_response(value):
     if isinstance(value, (str, bytes, bytearray)):
         return decode_log_content(value)
     try:
-        # Kubernetes limit_bytes bounds the response; enforce an additional local cap.
-        body = value.read(262145)
-        if not isinstance(body, bytes) or len(body) > 262144:
-            raise ValueError("INVALID_OR_OVERSIZED_LOG_RESPONSE")
+        body = value.read()
         return decode_log_content(body)
     finally:
         try:

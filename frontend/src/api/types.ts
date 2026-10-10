@@ -449,11 +449,11 @@ export interface Operation {
   error_code: string | null
 }
 export interface RunBudget {
-  accounting?: { reported_charge: number; estimated_or_reserved_charge: number; embedding_charge: number; remaining: number }
+  accounting?: { reported_charge: number; estimated_or_reserved_charge: number; embedding_charge: number; remaining: number | null }
   generation?: { attempts: number; reported_tokens: number; unreported_attempts: number }
   available: boolean
   run_id: string
-  policy?: { active_seconds: number; extra_seconds: number; total_tokens: number; decisions: number; tools: number }
+  policy?: { active_seconds: number | null; extra_seconds: number | null; total_tokens: number | null; decisions: number; tools: number | null }
   used?: { active_seconds: number; extra_seconds: number; tokens: number; decisions: number; tools: number }
   exhausted?: string | null
   calls?: unknown[]

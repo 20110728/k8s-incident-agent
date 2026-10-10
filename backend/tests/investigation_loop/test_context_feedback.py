@@ -36,11 +36,12 @@ def test_both_new_log_excerpts_survive_large_baseline_and_only_visible_ids_are_c
         "evidence_ids": [f"ev-new-{n}"], "coverage": "partial", "error_code": None} for n in range(2)]}]
     prompt = build_context(current, box.manifest(), history)
     evidence = {e["evidence_id"]: e for e in prompt["evidence"]}
-    assert estimate(prompt) <= INPUT_LIMIT
+    assert estimate(prompt) > 0
     assert set(prompt["available_evidence_ids"]) == set(evidence)
     for n in range(2):
         assert f"dependency-{n} connection refused" in evidence[f"ev-new-{n}"]["excerpt"]
-        assert evidence[f"ev-new-{n}"]["excerpt_truncated"]
+        assert not evidence[f"ev-new-{n}"]["excerpt_truncated"]
+        assert evidence[f"ev-new-{n}"]["source_truncated"]
     assert json.loads(json.dumps(prompt)) == prompt
 
 
@@ -94,7 +95,7 @@ def test_unjustified_repeat_uses_only_shared_correction_without_extra_reads(case
         assert all("RESAMPLE_REASON_REQUIRED" in failure["detail"] for failure in result["output"]["validation_failures"])
 
 
-def test_missing_latest_evidence_stops_before_model_instead_of_silent_omission(case, monkeypatch):
+def test_latest_failed_evidence_kept_despite_old_input_limit(case, monkeypatch):
     from backend.app.investigation import context
     box = case[1]
     current = deepcopy(box.state)
@@ -102,5 +103,7 @@ def test_missing_latest_evidence_stops_before_model_instead_of_silent_omission(c
         "resource_name": "pod", "request_id": "fresh", "data": {}, "error": "ACCESS_DENIED"})
     history = [{"results": [{"evidence_ids": ["ev-fresh"]}]}]
     monkeypatch.setattr(context, "INPUT_LIMIT", 1)
-    with pytest.raises(ValueError, match="LATEST_TOOL_EVIDENCE_NOT_IN_CONTEXT"):
-        build_context(current, box.manifest(), history)
+    prompt = build_context(current, box.manifest(), history)
+    assert "ev-fresh" in prompt["available_evidence_ids"]
+    assert not prompt["omitted_evidence_ids"]
+    assert next(e for e in prompt["evidence"] if e["evidence_id"] == "ev-fresh")["error"] == "ACCESS_DENIED"
