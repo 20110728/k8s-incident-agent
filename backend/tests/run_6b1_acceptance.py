@@ -11,7 +11,7 @@ from backend.app.persistence.settings import DatabaseSettings, get_database_sett
 from backend.tests.run_1a_acceptance import isolated_database_url
 
 
-def main(*, stage="6b1", extra_targets=(), required_reports=("evidence-change.json",)):
+def main(*, stage="6b1", extra_targets=(), required_reports=("evidence-change.json",), base_targets=None):
     database = os.environ.get("INCIDENT_AGENT_TEST_DATABASE_NAME", "")
     audit = os.environ.get("INCIDENT_AGENT_TEST_AUDIT_DIR")
     if not database.startswith(f"incident_agent_test_{stage}_") or not audit:
@@ -25,7 +25,7 @@ def main(*, stage="6b1", extra_targets=(), required_reports=("evidence-change.js
     with connect_database(DatabaseSettings(database_url=url)) as connection:
         run_migrations(connection)
     report = Path(audit) / "junit.xml"
-    targets = ["backend/tests/investigation_loop", "backend/tests/investigation",
+    targets = list(base_targets) if base_targets is not None else ["backend/tests/investigation_loop", "backend/tests/investigation",
         "backend/tests/unit/test_evidence_collector.py", "backend/tests/diagnosis_policy",
         "backend/tests/llm", "backend/tests/rag", "backend/tests/persistence/test_migrations.py",
         "backend/tests/runtime/test_operation_protocol.py", "backend/tests/runtime/test_operations_postgres.py"]

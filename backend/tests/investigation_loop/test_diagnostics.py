@@ -82,3 +82,31 @@ def test_cli_exports_requested_incident_using_read_only_transaction(case, monkey
     assert report["run"]["run_id"] == budget.lease["run_id"]
     assert report["model_attempts"][0]["validation"]["detail"] == "EVIDENCE_NOT_IN_CONTEXT"
     assert budget.lease["run_id"] in capsys.readouterr().out
+
+
+def test_cli_optional_cards_read_old_baseline_without_mutating_budget(case, monkeypatch, tmp_path):
+    from scripts import export_investigation_debug as cli
+    budget, box, settings = case
+    with budget.edit() as data:
+        data["investigation_baseline"] = deepcopy(box.state)
+    with budget.edit() as data:
+        before = deepcopy(data)
+    monkeypatch.setattr(cli, "get_database_settings", lambda: settings)
+    monkeypatch.setattr("sys.argv", ["export", "--incident-id", budget.lease["incident_id"],
+                                    "--run-id", budget.lease["run_id"], "--evidence-cards"])
+    monkeypatch.chdir(tmp_path)
+    cli.main()
+    exported = list((tmp_path / "evals/results/investigation-debug").glob("*.json"))
+    report = json.loads(exported[0].read_text(encoding="utf-8"))
+    cards = report["evidence_cards"]["cards"]
+    assert len(cards) == len(box.state["evidence"])
+    assert cards[0]["source_ref"]["record_path"] == "budget.investigation_baseline.evidence[0]"
+    assert not report["model_attempts"] and not report["tool_attempts"]
+    with budget.edit() as data:
+        assert data == before
+    box.clients.core.api.read_namespaced_pod_log.assert_not_called()
+    monkeypatch.setattr("sys.argv", ["export", "--incident-id", str(uuid4()),
+                                    "--run-id", budget.lease["run_id"], "--evidence-cards"])
+    with pytest.raises(ValueError, match="INCIDENT_OR_RUN_NOT_FOUND"):
+        cli.main()
+    assert len(list((tmp_path / "evals/results/investigation-debug").glob("*.json"))) == 1
