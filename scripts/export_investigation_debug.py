@@ -9,6 +9,7 @@ from backend.app.persistence.database import connect_database
 from backend.app.persistence.settings import get_database_settings
 from backend.app.investigation.diagnostics import debug_report
 from backend.app.investigation.cards import saved_cards
+from backend.app.investigation.brief_debug import brief_debug_report
 
 
 def main():
@@ -16,6 +17,7 @@ def main():
     parser.add_argument("--incident-id", required=True)
     parser.add_argument("--run-id", help="Defaults to the latest diagnosis run of this incident")
     parser.add_argument("--evidence-cards", action="store_true", help="Include bounded program-extracted saved evidence cards (no model calls)")
+    parser.add_argument("--brief", action="store_true", help="Compact troubleshooting report including evidence parsing status; overrides --evidence-cards")
     args = parser.parse_args()
     with connect_database(get_database_settings()) as connection:
         connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
@@ -27,12 +29,12 @@ def main():
         if row is None:
             raise ValueError("INCIDENT_OR_RUN_NOT_FOUND")
         budget = connection.execute("SELECT payload FROM incident_agent_app.run_budgets WHERE run_id=%s", (row["run_id"],)).fetchone()
-        report = debug_report(row, budget["payload"] if budget else {})
-        if args.evidence_cards:
+        report = (brief_debug_report if args.brief else debug_report)(row, budget["payload"] if budget else {})
+        if args.evidence_cards and not args.brief:
             report["evidence_cards"] = saved_cards(row.get("output_snapshot"), budget["payload"] if budget else {})
     folder = Path("evals/results/investigation-debug")
     folder.mkdir(parents=True, exist_ok=True)
-    path = folder / (datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid4().hex[:8] + ".json")
+    path = folder / (datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid4().hex[:8] + ("-brief.json" if args.brief else ".json"))
     with path.open("x", encoding="utf-8") as stream:
         json.dump(report, stream, ensure_ascii=False, indent=2)
     print(f"run_id: {row['run_id']}")

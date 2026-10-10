@@ -110,3 +110,53 @@ def test_cli_optional_cards_read_old_baseline_without_mutating_budget(case, monk
     with pytest.raises(ValueError, match="INCIDENT_OR_RUN_NOT_FOUND"):
         cli.main()
     assert len(list((tmp_path / "evals/results/investigation-debug").glob("*.json"))) == 1
+
+
+def test_brief_keeps_failure_and_usage_without_duplicate_bodies():
+    from backend.app.investigation.brief_debug import brief_debug_report
+    row = {"incident_id": "event", "run_id": "run", "status": "succeeded", "output_snapshot": {
+        "output": {"stop_reason": "REQUIRED_EVIDENCE_NOT_IN_CONTEXT"}}}
+    data = {"tokens": 19000, "calls": {"one": {"kind": "investigation_model", "status": "completed",
+        "request_id": "decision:1", "usage": {"total_tokens": 123},
+        "metadata": {"selection": [{"evidence_id": str(i), "excerpt_digest": "x" * 64} for i in range(100)],
+                     "context_version": "v2.2", "input_estimate": 1234},
+        "validation": {"detail": "DUPLICATE_QUERY"},
+        "result": {"parsed": {"decision": {"action": "collect", "reason": "Authorization: Bearer private-key"}}}}},
+        "context_assembly_failures": {"decision:2": {"reason": "REQUIRED_EVIDENCE_NOT_IN_CONTEXT",
+                                                  "omitted_ids": ["ev-required"]}}}
+    before = deepcopy((row, data))
+    brief = brief_debug_report(row, data)
+    encoded = json.dumps(brief)
+    assert "private-key" not in encoded and "excerpt_digest" not in encoded
+    assert brief["model_attempts"][0]["validation"] == "DUPLICATE_QUERY"
+    assert brief["context_failures"][0]["omitted_ids"] == ["ev-required"]
+    assert brief["budget"]["reported_model_tokens"] == 123
+    assert brief["budget"]["charged_or_reserved_tokens"] == 19000
+    assert len(encoded) < len(json.dumps(debug_report(row, data))) / 2
+    assert (row, data) == before
+
+
+def test_brief_old_record_does_not_invent_success():
+    from backend.app.investigation.brief_debug import brief_debug_report
+    result = brief_debug_report({"status": "running"}, {"calls": {
+        "old": {"kind": "investigation_model", "status": "started_or_interrupted"}}})
+    assert result["stop_reason"] is None and not result["evidence"]
+    assert result["budget"]["model_calls_missing_usage"] == 1
+
+
+def test_cli_brief_includes_card_status_without_full_cards(case, monkeypatch, tmp_path):
+    from scripts import export_investigation_debug as cli
+    budget, box, settings = case
+    with budget.edit() as data:
+        data["investigation_baseline"] = deepcopy(box.state)
+    monkeypatch.setattr(cli, "get_database_settings", lambda: settings)
+    monkeypatch.setattr("sys.argv", ["export", "--incident-id", budget.lease["incident_id"],
+                                    "--brief", "--evidence-cards"])
+    monkeypatch.chdir(tmp_path)
+    cli.main()
+    path, = (tmp_path / "evals/results/investigation-debug").glob("*-brief.json")
+    report = json.loads(path.read_text(encoding="utf-8"))
+    assert report["report_version"] == "brief-v1" and report["evidence"]
+    assert "evidence_cards" not in report and "available_resources" not in report
+    assert all("parse" in e and "fields" not in e and "excerpt" not in e for e in report["evidence"])
+    box.clients.core.api.read_namespaced_pod_log.assert_not_called()

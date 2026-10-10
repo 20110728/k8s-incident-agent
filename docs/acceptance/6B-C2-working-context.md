@@ -51,3 +51,7 @@ bash scripts/deploy_stage6b2b_backend.sh
 - 上下文版本 `investigation-context-v2.2`：正常视图放不下必需证据时自动重装一次紧凑视图，保留引用、采样范围和字段省略标记；不增加 LLM 调用。收尾不发送采集工具目录。仍不足则保守交接，诊断页面保留已采证据数量及资源/业务状态，不编造根因。
 - `test_c2_robustness.py` 覆盖真实 SDK 的模拟 HTTP 响应路径、坏编码释放连接、三轮六次采集、一次纠正、最终收尾和无重复回放；`c2-robustness.json` 为验收必需报告。另覆盖紧凑视图降级和新预算边界。仅 ECS 运行动态测试，本地只做静态检查。
 - 命令不变：`bash scripts/accept_stage6bc2.sh` → PASS 后 `bash scripts/deploy_stage6b2b_backend.sh` → 浏览器创建一个新异常事件，确认能进入诊断/有事实说明的交接。无新增配置、依赖、迁移或前端构建；backend 和 worker 均需重启。真实模型与集群效果待该次浏览器验证。
+
+### 精简排障导出
+
+`python -m scripts.export_investigation_debug --incident-id <事件ID> --brief`，可加 `--run-id` 指定轮次。生成 `evals/results/investigation-debug/*-brief.json`，优先反馈此文件。保留停止原因、预算/实际用量、决策与工具轨迹、校验错误、上下文遗漏 ID、证据解析状态和少量日志/事件示例；删除完整正文、选材哈希及重复目录。数量/文本有上限，遗漏显式标记，缺失 usage 不当作零消耗。只读保存记录，不调用模型/集群、不修改数据库，无重启要求。`--brief` 自动包含精简证据信息，优先于 `--evidence-cards`；完整导出旧命令仍可用。
