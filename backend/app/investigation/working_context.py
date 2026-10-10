@@ -6,7 +6,7 @@ from backend.app.investigation.cards import evidence_card, VERSION as CARD_VERSI
 from backend.app.investigation.records import digest
 from backend.app.tools.investigation import redact_output
 
-VERSION = "investigation-context-v2.2"
+VERSION = "investigation-context-v2.3"
 
 
 def text(value, limit):

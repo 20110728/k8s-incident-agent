@@ -1,7 +1,7 @@
 """Bounded valid JSON; only included evidence/runbook IDs may be cited."""
 import json
 from math import ceil
-from backend.app.agent.diagnosis_policy import diagnostic_facts
+from backend.app.agent.diagnosis_policy import diagnostic_facts, diagnosis_contract
 from backend.app.investigation.contracts import Decision, TOOL_GUIDE
 from backend.app.tools.investigation import redact_output
 from backend.app.investigation.compact import compact_history
@@ -25,6 +25,7 @@ Container current state is separate from historical_only. Past OOMKilled/exit co
 Do not repeat a query because other evidence changed or request a different line count to bypass duplication. Stop if no effective allowed alternative remains.
 History requests/results describe completed attempts. Read their current evidence excerpts before selecting another tool; an omitted or truncated excerpt is not permission to repeat the same query.
 For conclude/propose provide a CurrentDiagnosis consistent with policy_facts, cite required resource/business/configuration facts. Runtime/dependency root causes remain suspected; claims are not cluster evidence.
+Follow diagnosis_contract for category/domain meanings and blocked configuration categories. Unknown with grounded symptoms and explicit missing evidence is a valid conclusion; do not force a root-cause category merely to finish.
 Do not invent missing evidence, certainty, resources, runbooks or approval. Explain briefly in Chinese. When terminal_only=true choose ONLY conclude or stop; no more collection or questions.
 """
 
@@ -50,7 +51,7 @@ def build_context(state, manifest, history, *, terminal_only=False, feedback=Non
     human = human_context(dialogue)
     memory = working_state(state, facts, human)
     prompt = {"context_version": VERSION, "purpose": "diagnosis" if terminal_only else "investigate",
-        "target": state["request"], "policy_facts": facts, "working_state": memory,
+        "target": state["request"], "policy_facts": facts, "diagnosis_contract": diagnosis_contract(facts), "working_state": memory,
         "terminal_only": terminal_only, "tool_guide": {} if terminal_only else TOOL_GUIDE, "resources": [], "evidence": [],
         "runbooks": [], "available_evidence_ids": [], "available_runbook_ids": [],
         "history": compact_history(history), "feedback": feedback, "omitted_evidence_ids": [],

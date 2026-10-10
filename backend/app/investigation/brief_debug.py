@@ -37,6 +37,8 @@ def brief_debug_report(row, data):
             "action": decision.get("action"), "reason": safe_text(decision.get("reason") or "", 180),
             "missing_fact": safe_text(decision.get("missing_fact") or "", 160),
             "diagnosis_category": diagnosis.get("fault_category"),
+            "problem_domain": (diagnosis.get("assessment") or {}).get("problem_domain"),
+            "diagnosis_facts": (call.get("validation_context") or {}).get("diagnosis_facts"),
             "root_cause": safe_text(diagnosis.get("root_cause") or "", 180),
             "requests": [request(r) for r in decision.get("requests", [])[:2]],
             "usage": call.get("usage"), "input_estimate": meta.get("input_estimate"),

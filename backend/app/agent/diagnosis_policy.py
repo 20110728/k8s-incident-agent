@@ -13,6 +13,38 @@ class InvalidDiagnosisAssessment(ValueError):
     pass
 
 
+DIAGNOSIS_DOMAINS = {
+    "service_selector_mismatch": ("deployment_configuration",),
+    "readiness_probe_error": ("deployment_configuration",),
+    "application_error": ("application_runtime",),
+    "dependency_error": ("dependency",),
+    "unknown": ("insufficient_evidence",),
+    "no_fault_detected": ("none",),
+    "crash_loop_backoff": ("application_runtime",),
+    "oom_killed": ("application_runtime",),
+    "image_pull_backoff": ("deployment_configuration", "dependency", "insufficient_evidence"),
+}
+CONFIGURATION_DRIFT = {"service_selector_mismatch": "selector_drift", "readiness_probe_error": "readiness_drift"}
+
+
+def diagnosis_contract(facts):
+    """Project the validator's category/domain and configuration gates for the model."""
+    return {
+        "category_domains": DIAGNOSIS_DOMAINS,
+        "blocked_configuration_categories": {category: f"{key}=false; no verified configuration drift"
+            for category, key in CONFIGURATION_DRIFT.items() if not facts[key]},
+        "rules": [
+            "readiness_probe_error means verified probe CONFIGURATION drift, not any readiness failure. HTTP 503 alone does not prove incorrect configuration.",
+            "Configuration diagnoses require configuration evidence citations, including in each supported hypothesis.",
+            "application_error requires failed business checks or current_runtime_faults; a connection error alone is insufficient.",
+            "dependency_error requires current failure symptoms, cited current workload logs and an explicit suspected hypothesis; logs do not prove a downstream root cause.",
+            "crash_loop_backoff/image_pull_backoff/oom_killed require the category in current_runtime_faults; historical exits do not qualify.",
+            "no_fault_detected requires ready resources, passed business checks, no readiness drift and no current runtime faults.",
+            "When the cause remains uncertain, conclude unknown/insufficient_evidence with confidence <=0.6; preserve observed symptoms, suspected hypotheses, missing evidence and next investigation. This is a valid conclusion, not a failed investigation.",
+        ],
+    }
+
+
 def readiness_configuration_facts(container: dict, expected) -> dict:
     """Separate observed configuration drift from the path/port writer's scope.
 
@@ -267,26 +299,15 @@ def validate_diagnosis_assessment(diagnosis: Diagnosis, state: dict) -> None:
         "diagnosis must cite collected registered BusinessCheck results",
     )
     category = diagnosis.fault_category
-    domains = {
-        "service_selector_mismatch": "deployment_configuration",
-        "readiness_probe_error": "deployment_configuration",
-        "application_error": "application_runtime",
-        "dependency_error": "dependency",
-        "unknown": "insufficient_evidence",
-        "no_fault_detected": "none",
-        "crash_loop_backoff": "application_runtime",
-        "oom_killed": "application_runtime",
-    }
-    if category in domains:
+    if category in DIAGNOSIS_DOMAINS:
         require(
-            a.problem_domain == domains[category],
-            "problem_domain contradicts fault_category",
-        )
-    if category == "image_pull_backoff":
-        require(
-            a.problem_domain
-            in {"deployment_configuration", "dependency", "insufficient_evidence"},
-            "image pull failure does not establish application runtime failure",
+            a.problem_domain in DIAGNOSIS_DOMAINS[category],
+            "problem_domain contradicts fault_category: "
+            f"fault_category={category}, actual_domain={a.problem_domain}, allowed_domains={DIAGNOSIS_DOMAINS[category]}; "
+            f"readiness_drift={facts['readiness_drift']}, selector_drift={facts['selector_drift']}. "
+            "Reassess the category, not just the domain: readiness_probe_error means verified probe configuration drift, "
+            "not HTTP 503 alone. Without supporting evidence choose unknown/insufficient_evidence, "
+            "confidence<=0.6, with symptoms, missing evidence and next investigation; do not invent drift.",
         )
     if category == "no_fault_detected":
         require(
@@ -309,10 +330,7 @@ def validate_diagnosis_assessment(diagnosis: Diagnosis, state: dict) -> None:
         # 已有充分证据支持的配置故障，不强制虚构缺失证据或调查步骤。
         # 仅有模型分类不够：必须存在真实漂移、完整配置证据，
         # 且 supported 假设引用了必要配置证据。
-        config_key = {
-            "service_selector_mismatch": "selector_drift",
-            "readiness_probe_error": "readiness_drift",
-        }.get(category)
+        config_key = CONFIGURATION_DRIFT.get(category)
 
         grounded_configuration = bool(
             config_key
@@ -338,14 +356,13 @@ def validate_diagnosis_assessment(diagnosis: Diagnosis, state: dict) -> None:
     if category == "unknown":
         require(diagnosis.confidence <= 0.6, "unknown confidence must be <= 0.6")
     if category in {"service_selector_mismatch", "readiness_probe_error"}:
-        key = (
-            "selector_drift"
-            if category == "service_selector_mismatch"
-            else "readiness_drift"
-        )
+        key = CONFIGURATION_DRIFT[category]
         require(
             facts[key],
-            "configuration diagnosis requires version-matched registered configuration drift",
+            "configuration diagnosis requires version-matched registered configuration drift: "
+            f"{category} requires {key}=true, actual={facts[key]}. "
+            "Probe HTTP 503 alone is a symptom, not configuration drift. Reassess using diagnosis_contract; "
+            "if the cause is uncertain, conclude unknown/insufficient_evidence with symptoms and missing evidence.",
         )
         require(
             set(facts["configuration_evidence_ids"]) <= set(diagnosis.evidence_ids),

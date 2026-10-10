@@ -31,6 +31,7 @@ def record_validation(budget, request_id, *, step, attempt, error, response, pro
         saved = call.setdefault("validation", note)
         call.setdefault("validation_context", {"evidence_ids": prompt["available_evidence_ids"],
             "runbook_ids": prompt["available_runbook_ids"],
+            "diagnosis_facts": {k: prompt.get("policy_facts", {}).get(k) for k in ("readiness_drift", "selector_drift")},
             "resource_refs": [item["resource_ref"] for item in prompt["resources"]]})
         return deepcopy(saved)
 

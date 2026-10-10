@@ -55,3 +55,9 @@ bash scripts/deploy_stage6b2b_backend.sh
 ### 精简排障导出
 
 `python -m scripts.export_investigation_debug --incident-id <事件ID> --brief`，可加 `--run-id` 指定轮次。生成 `evals/results/investigation-debug/*-brief.json`，优先反馈此文件。保留停止原因、预算/实际用量、决策与工具轨迹、校验错误、上下文遗漏 ID、证据解析状态和少量日志/事件示例；删除完整正文、选材哈希及重复目录。数量/文本有上限，遗漏显式标记，缺失 usage 不当作零消耗。只读保存记录，不调用模型/集群、不修改数据库，无重启要求。`--brief` 自动包含精简证据信息，优先于 `--evidence-cards`；完整导出旧命令仍可用。
+
+### 诊断收尾补丁：v2.3
+
+浏览器已走到三轮采集后的结论生成，失败为 `problem_domain contradicts fault_category`。本块不改采集/预算/审批：`diagnosis_policy.py` 集中维护类别与领域映射、配置漂移键，供校验及模型输入的 `diagnosis_contract` 共用；无漂移时明确禁止配置类诊断，503 仅是症状，证据不足允许合法 unknown 结论。错误反馈包含实际类别/领域、允许领域与两个漂移值，要求重新判断类别，禁止自动替模型改分类。上下文版本 v2.3；精简导出补充问题领域与失败时漂移值，旧记录缺失不补造。
+
+沿用 `accept_stage6bc2.sh`，新增必需报告 `diagnosis-contract.json`：三轮采集→错误配置分类被拒→一次纠正为 unknown→结论正常发布→回放无重复调用；同时验证真实探针配置漂移仍通过。脚本通过后结束活动调查，再运行 `deploy_stage6b2b_backend.sh`，用新事件验证能进入诊断（unknown 也是合法结论，不代表恢复）。无配置、依赖、迁移或前端更新；需重启 backend/worker。动态与真实模型结果待 ECS，不能由静态检查推断通过。
