@@ -9,7 +9,7 @@ from backend.app.investigation.working_context import (
     VERSION, human_context, historical_context, working_state, unique_evidence, card_block, raw_block,
 )
 
-INPUT_LIMIT = 16000
+INPUT_LIMIT = 32000
 OUTPUT_LIMIT = 3000
 CALL_TOKENS = INPUT_LIMIT + OUTPUT_LIMIT
 CALL_SECONDS = 30
@@ -22,7 +22,7 @@ For collect state the missing fact and expected usefulness. Choose 1 tool, or at
 Keep reason and missing_fact concise (prefer at most 120 Chinese characters each); cite evidence IDs instead of repeating all observed facts.
 Use only provided resource_ref and evidence IDs. Tools may be partial or fail: neither proves health. Current logs may suggest a dependency cause but cannot confirm the downstream root cause. Previous logs are historical.
 Container current state is separate from historical_only. Past OOMKilled/exit codes/restart counts do not prove the present fault. To inspect the previous container instance request previous=true; current logs cannot establish what preceded a past exit. Select the log instance that matches your missing fact.
-For logs prefer requesting 1000 lines initially. One strictly larger log window is allowed per object/container/previous combination without resample_reason; this still costs one tool request. Otherwise do not repeat a query just because evidence is insufficient. Conclude unknown if no useful alternative remains.
+Log reads use a fixed 1000-line window, including the first request. The server normalizes smaller requested windows to 1000; increasing tail_lines cannot obtain additional evidence. Otherwise do not repeat a query just because evidence is insufficient. Conclude unknown if no useful alternative remains.
 History requests/results describe completed attempts. Read their current evidence excerpts before selecting another tool; an omitted or truncated excerpt is not permission to repeat the same query.
 For conclude/propose provide a CurrentDiagnosis consistent with policy_facts, cite required resource/business/configuration facts. Runtime/dependency root causes remain suspected; claims are not cluster evidence.
 Follow diagnosis_contract for category/domain meanings and blocked configuration categories. Unknown with grounded symptoms and explicit missing evidence is a valid conclusion; do not force a root-cause category merely to finish.

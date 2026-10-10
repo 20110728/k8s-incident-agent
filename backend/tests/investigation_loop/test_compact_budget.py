@@ -26,7 +26,7 @@ def test_new_policy_and_existing_budget_snapshot_are_distinct(case):
     assert POLICY["total_tokens"] == 120000
 
 
-@pytest.mark.parametrize("limit,used", [(60000, 32609), (120000, 92609)])
+@pytest.mark.parametrize("limit,used", [(60000, 16000), (120000, 76000)])
 def test_remaining_budget_routes_directly_to_final_without_double_reservation(case, limit, used):
     budget, box, _ = case
     with budget.edit() as data:
@@ -52,7 +52,7 @@ def test_remaining_budget_routes_directly_to_final_without_double_reservation(ca
 def test_correction_switches_to_final_only_after_cost_settlement(case):
     budget = case[0]
     with budget.edit() as data:
-        data["policy"]["total_tokens"] = 60000
+        data["policy"]["total_tokens"] = 94000
     budget.reserve("embedding", tokens=20000)
     class PaidModel(Model):
         def invoke(self, prompt):
@@ -75,7 +75,7 @@ def test_correction_switches_to_final_only_after_cost_settlement(case):
 
 def test_final_only_still_rejects_invented_citations(case):
     budget, box, _ = case
-    budget.reserve("embedding", tokens=92000)
+    budget.reserve("embedding", tokens=76000)
     model = Model(lambda prompt: {**stop(prompt), "evidence_ids": ["ev-invalid"]})
     with session(case, model) as (_, _, advance):
         result = advance()

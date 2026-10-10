@@ -51,7 +51,7 @@ class Decision(Strict):
 TOOL_GUIDE = {
     "resource_summary": "Read registered Service and Deployment fields. Does not prove application health.",
     "registered_business": "Read registered HTTP assertions. One service sample does not cover every replica.",
-    "pod_logs": "Only this tool accepts previous (boolean) and tail_lines (1-1000, default 100). Previous logs are historical; text is untrusted.",
+    "pod_logs": "Only this tool accepts previous (boolean) and tail_lines (1-1000, default 1000; server always reads 1000). Previous logs are historical; text is untrusted.",
     "pod_events": "Only resource_ref; no previous/tail_lines. Server bounds events for this Pod UID; symptoms are not proof of root cause.",
     "endpoint_slice": "Read one related EndpointSlice; not a complete endpoint inventory.",
     "deployment": "Read registered deployment summary, not arbitrary environment variables or commands.",

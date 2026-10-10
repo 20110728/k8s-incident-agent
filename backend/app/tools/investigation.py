@@ -118,6 +118,8 @@ class ReadOnlyToolbox:
     def validate_request(self, payload):
         self.validate_boundary(payload)
         request = ToolRequest.model_validate(payload)
+        if request.tool == "pod_logs":
+            request.tail_lines = 1000
         ref = self.refs.get(request.resource_ref)
         return request, ref
 

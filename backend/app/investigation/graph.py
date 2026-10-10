@@ -106,6 +106,9 @@ def validate_decision(value, prompt, current, toolbox, terminal):
         # Preserve the old execution payload used by graph checkpoints, query
         # keys and durable tool-request fingerprints.
         result["requests"] = [ToolRequest.model_validate(r).model_dump() for r in result["requests"]]
+        for request in result["requests"]:
+            if request["tool"] == "pod_logs":
+                request["tail_lines"] = 1000
     return result
 
 

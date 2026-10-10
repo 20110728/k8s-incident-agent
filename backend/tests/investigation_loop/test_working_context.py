@@ -78,7 +78,7 @@ def test_failed_refresh_and_human_report_never_restore_old_pass(case):
 def test_card_context_is_valid_json_single_representation_and_round_trip_stable(case, storage):
     current = deepcopy(case[1].state)
     for row in current["evidence"]:
-        row["data"]["irrelevant_padding"] = "UNNEEDED-BODY" * 3000
+        row["data"]["irrelevant_padding"] = "UNNEEDED-BODY" * 10000
     original = deepcopy(current)
     prompt = build_context(current, case[1].manifest(), [])
     assert estimate(prompt) <= INPUT_LIMIT and current == original

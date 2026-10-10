@@ -190,7 +190,7 @@ def collect_service_evidence(
                         clients=clients,
                         namespace=namespace,
                         pod_name=pod_name,
-                        tail_lines=100,
+                        tail_lines=1000,
                     )
                 )
             except Exception as error:
@@ -214,7 +214,7 @@ def collect_service_evidence(
                             namespace=namespace,
                             pod_name=pod_name,
                             previous=True,
-                            tail_lines=100,
+                            tail_lines=1000,
                         )
                     )
                 except Exception as error:

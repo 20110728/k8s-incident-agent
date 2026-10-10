@@ -25,13 +25,13 @@ def test_raw_fields_reach_model_without_card_field_selection(case):
     assert "private-value" not in json.dumps(prompt) and estimate(prompt) <= INPUT_LIMIT
 
 
-def test_fifty_to_thousand_lines_then_conclusion_and_replay(case):
+def test_first_request_is_thousand_lines_then_conclusion_and_replay(case):
     budget, box, _ = case
     box.clients.core.api.read_namespaced_pod_log.side_effect = lambda **kw: ("raw line\n" * kw["tail_lines"]).encode()
     requests = []
     def choose(prompt):
         n = len(model.prompts)
-        if n <= 2:
+        if n == 1:
             ref = next(r["resource_ref"] for r in prompt["resources"] if r["kind"] == "pod")
             request = {"tool": "pod_logs", "resource_ref": ref, "previous": False, "tail_lines": 50 if n == 1 else 1000}
             requests.append(request)
@@ -43,15 +43,18 @@ def test_fifty_to_thousand_lines_then_conclusion_and_replay(case):
     model = Model(choose)
     with session(case, model) as (_, _, advance):
         result = advance()
-    assert result["output"]["status"] == "conclude" and len(model.prompts) == 3
-    assert box.clients.core.api.read_namespaced_pod_log.call_count == 2
+    assert result["output"]["status"] == "conclude" and len(model.prompts) == 2
+    assert box.clients.core.api.read_namespaced_pod_log.call_count == 1
+    assert requests[0]["tail_lines"] == 50  # Even an explicit small model request is normalized.
+    assert box.clients.core.api.read_namespaced_pod_log.call_args.kwargs["tail_lines"] == 1000
+    assert result["history"][0]["requests"][0]["tail_lines"] == 1000
     with pytest.raises(ValueError, match="RESAMPLE_REASON_REQUIRED"):
         authorize_sample(budget, box, requests[-1], "third", None, [])
     with pytest.raises(ValueError):
         ToolRequest.model_validate({**requests[-1], "tail_lines": 1001})
     with session(case, Model(lambda _: pytest.fail("paid replay"))) as (_, _, advance):
         assert advance() == result
-    assert box.clients.core.api.read_namespaced_pod_log.call_count == 2
+    assert box.clients.core.api.read_namespaced_pod_log.call_count == 1
     if os.environ.get("INCIDENT_AGENT_TEST_AUDIT_DIR"):
         (Path(os.environ["INCIDENT_AGENT_TEST_AUDIT_DIR"]) / "raw-evidence.json").write_text(
-            json.dumps({"lines": 1000, "tool_reads": 2, "conclusion": "unknown", "replay": "passed"}), encoding="utf-8")
+            json.dumps({"lines": 1000, "tool_reads": 1, "conclusion": "unknown", "replay": "passed"}), encoding="utf-8")

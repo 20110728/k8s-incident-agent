@@ -172,7 +172,7 @@ def get_pod_logs(
     pod_name: str,
     container_name: str | None = None,
     previous: bool = False,
-    tail_lines: int = 200,
+    tail_lines: int = 1000,
 ) -> PodLogInfo:
     safe_tail_lines = min(
         max(tail_lines, 1),

@@ -20,7 +20,7 @@ class RequestBase(BaseModel):
 class LogRequest(RequestBase):
     tool: Literal["pod_logs"]
     previous: bool = False
-    tail_lines: int = Field(default=100, ge=1, le=1000)
+    tail_lines: int = Field(default=1000, ge=1, le=1000)
 
 
 class ResourceRequest(RequestBase):
