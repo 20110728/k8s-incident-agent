@@ -1,0 +1,34 @@
+# 6B-C2：调查状态与上下文
+
+状态：C1 已由维护者反馈 ECS PASS；C2 已实现，待 ECS 验收。
+
+## 实现机制
+
+- `working_context.py` 生成 `investigation-context-v2`。调查和收尾诊断共用程序选材；卡片只发送字段表示或解析失败摘录中的一种，避免原文与提取结果重复。短视图/扩展视图都是完整 JSON，数组和文本截短带遗漏标记；原记录不改写。独立的解释/比较接口保持原历史快照逻辑，本块先接入调查主路径。
+- 当前状态引用现有 `policy_facts` 和证据编号，另记失败、身份冲突、待回答槽位和历史证据编号，不复制大正文。由持久化原记录确定性重建，调用账本保存该次状态及来源指纹；不新增事实表或复制一份完整 checkpoint。已有采样失效规则继续使失败复采后的健康判定变 unknown；补充 namespace/UID 与采样时间检查，较旧采样不覆盖较新观察，不同 UID 保留冲突。旧记录无时间/身份时保留既有顺序与 unknown 元数据，不能补造身份或采样时间。
+- 人工回答沿用问题 ID/槽位/消息 ID 的绑定；每条送入最多 600 字符，超长保留首尾并标中间省略，原文仍保留。同一消息不再同时出现在回答和历史消息中。历史最多 5 条各 200 字符；旧结论标背景/假设。人工说“修好了”不会变成工具事实，等待人工后仍禁止据旧基线确认健康或生成写计划。
+- 必需事实与已执行调查的卡片先于可选背景装入；仅已显示证据可引用，重复 ID/相同记录仅呈现一次，重复 ID/不同内容拒绝。记录选材版本、用途、摘要指纹、入选原因及遗漏 ID。必需最小输入放不下时，在模型调用前停止并持久化 `context_assembly_failures`，既有只读导出可看到；不降低引用校验、不付费让模型猜。
+- 正常仍为一个调查模型，无摘要/分类模型，无新增预算。相同请求从账本复用结果；版本/输入变化仍拒绝付费重放。已保存原始证据和旧结果可读；不承诺旧版本活动调查跨本次升级继续运行。按需补读和动态合法动作目录留在 C3，因此浏览器上下文缺失问题尚不能宣称全面解决。
+
+## ECS 验收与部署
+
+先让活动调查完成，或在页面停止等待补充的调查；不要为了升级批准写操作。项目目录、Python 3.12 `.venv` 激活后：
+
+```bash
+git pull --ff-only origin feature/baseline-contracts
+bash scripts/accept_stage6bc2.sh
+```
+
+预期 `PASS: 6B-C2 ECS acceptance.`，无失败/错误/skipped。受控模型/集群、真实隔离 PostgreSQL；覆盖卡片、上下文、预算、调查循环、追问恢复及生产审批衔接，不运行真实模型或前端构建。结果目录打印在末尾，重点文件为 `backend.txt`、`junit.xml`、`working-context.json`，沿用成功测试子库清理机制。
+
+通过后复用已有后端部署脚本（无需构建前端）：
+
+```bash
+bash scripts/deploy_stage6b2b_backend.sh
+```
+
+预期 readyz 返回 ready；backend/worker 的 execution_mode 均为 queued，investigation_enabled 应保持 true。无新增配置、依赖或数据库迁移；需要更新并重启 backend 和 worker。新事件才使用新上下文；旧终态事件不用重跑。
+
+可选对新事件使用 `python -m scripts.export_investigation_debug --incident-id <事件ID>`，查看 `metadata.context_version/selection/working_state` 或 `context_assembly_failures`。实际 Token 降幅和真实模型调查质量待实测，不以受控 PASS 推断浏览器全部通过。
+
+本地仅完成 261 个 Python 文件 AST 语法解析、Bash `-n` 和 Git 差异检查；未运行 pytest、数据库动态测试或模型调用。

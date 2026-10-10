@@ -79,6 +79,7 @@ def debug_report(row, data):
     report = {"report_version": 1, "source": "saved_records_only_no_model_or_tool_execution",
         "run": {k: row.get(k) for k in ("incident_id", "run_id", "workflow_version", "status", "created_at", "updated_at")},
         "stop_reason": (state.get("output") or {}).get("stop_reason"), "model_attempts": calls[:5],
+        "context_assembly_failures": list(data.get("context_assembly_failures", {}).values())[:5],
         "tool_attempts": [{"request_id": c.get("request_id"), "status": c.get("status"),
             "request": c.get("metadata", {}).get("request"),
             "result": {k: (c.get("result") or {}).get(k) for k in ("coverage", "error_code", "collected_at", "truncated")}}

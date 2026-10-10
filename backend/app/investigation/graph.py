@@ -9,7 +9,7 @@ from pydantic import ValidationError
 from backend.app.agent.diagnosis_policy import diagnostic_facts, validate_diagnosis_assessment, InvalidDiagnosisAssessment
 from backend.app.agent.nodes import validate_diagnosis_references, InvalidDiagnosisReference
 from backend.app.agent.remediation_policy import get_allowed_remediation_actions
-from backend.app.investigation.context import build_context, CALL_TOKENS, CALL_SECONDS
+from backend.app.investigation.context import build_context, CALL_TOKENS, CALL_SECONDS, ContextAssemblyError
 from backend.app.investigation.contracts import Decision
 from backend.app.investigation.evidence import current_state, adapt
 from backend.app.investigation.model import call_model, terminal_mode
@@ -91,6 +91,8 @@ def validate_decision(value, prompt, current, toolbox, terminal):
             raise ValueError("; ".join(errors))
         if diagnosis.fault_category == "no_fault_detected" and any(e.get("error") for e in current["evidence"]):
             raise ValueError("FAILED_OBSERVATION_CANNOT_PROVE_HEALTH")
+        if diagnosis.fault_category == "no_fault_detected" and prompt.get("working_state", {}).get("identity_conflicts"):
+            raise ValueError("CONFLICTING_IDENTITY_CANNOT_PROVE_HEALTH")
         if decision.action == "propose_plan" and decision.candidate not in get_allowed_remediation_actions({**current, "diagnosis": diagnosis.model_dump()}):
             raise ValueError("REPAIR_CANDIDATE_NOT_ALLOWED")
     result = decision.model_dump(mode="json")
@@ -203,6 +205,9 @@ def build_investigation_graph(budget, toolbox, model, *, checkpointer=None, inte
         except LeaseLost:
             raise
         except (BudgetExceeded, IncompleteRequest, ValueError) as error:
+            if isinstance(error, ContextAssemblyError):
+                with budget.edit() as data:
+                    data.setdefault("context_assembly_failures", {}).setdefault(attempt_id, error.selection)
             return {"phase": "finished", "output": handoff(state, str(error)[:200])}
 
     def collect(state):

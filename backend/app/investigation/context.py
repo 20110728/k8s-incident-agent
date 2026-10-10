@@ -4,7 +4,10 @@ from math import ceil
 from backend.app.agent.diagnosis_policy import diagnostic_facts
 from backend.app.investigation.contracts import Decision, TOOL_GUIDE
 from backend.app.tools.investigation import redact_output
-from backend.app.investigation.compact import compact_history, evidence_text
+from backend.app.investigation.compact import compact_history
+from backend.app.investigation.working_context import (
+    VERSION, human_context, historical_context, working_state, unique_evidence, card_block,
+)
 
 INPUT_LIMIT = 8000
 OUTPUT_LIMIT = 1500
@@ -33,74 +36,78 @@ def estimate(prompt):
     return ceil(len((SYSTEM + encode(prompt) + encode(Decision.model_json_schema())).encode()) / 3) + 512
 
 
+class ContextAssemblyError(ValueError):
+    def __init__(self, code, prompt):
+        super().__init__(code)
+        self.selection = {"context_version": VERSION, "reason": code, "input_estimate": estimate(prompt),
+                          "selected_ids": prompt["available_evidence_ids"],
+                          "omitted_ids": prompt["omitted_evidence_ids"]}
+
+
 def build_context(state, manifest, history, *, terminal_only=False, feedback=None, dialogue=None):
     facts = diagnostic_facts(state)
-    prompt = {"target": state["request"], "policy_facts": facts, "terminal_only": terminal_only,
-        "tool_guide": TOOL_GUIDE, "resources": [], "evidence": [], "runbooks": [],
-        "available_evidence_ids": [], "available_runbook_ids": [], "history": compact_history(history),
-        "feedback": feedback, "omitted_evidence_ids": [], "context_coverage": "Selected fields and bounded excerpts, not full observations; omitted input never authorizes recollection."}
-    if dialogue is not None:
-        prompt.update(interactive=True, human_context=dialogue,
+    human = human_context(dialogue)
+    memory = working_state(state, facts, human)
+    prompt = {"context_version": VERSION, "purpose": "diagnosis" if terminal_only else "investigate",
+        "target": state["request"], "policy_facts": facts, "working_state": memory,
+        "terminal_only": terminal_only, "tool_guide": TOOL_GUIDE, "resources": [], "evidence": [],
+        "runbooks": [], "available_evidence_ids": [], "available_runbook_ids": [],
+        "history": compact_history(history), "feedback": feedback, "omitted_evidence_ids": [],
+        "context_coverage": "Selected program-extracted fields only. User claims and historical hypotheses are not current facts. Only displayed evidence IDs may be cited; omission never authorizes recollection."}
+    if human is not None:
+        prompt.update(interactive=True, human_context=human,
                       health_limit="After a human wait, old snapshots alone cannot establish current health; conclude unknown or start a new full baseline if needed.")
-    if state.get("round_context"):
-        history_context = state["round_context"]
-        previous = history_context.get("previous_result", {})
-        prompt["historical_context_unverified"] = {
-            "usage": "Historical background only; never current evidence or approval.",
-            "messages": [{"message_id": m["message_id"], "content": m["content"][:200], "excerpt": True}
-                         for m in history_context.get("messages", [])[-5:]],
-            "previous_result": {k: str(previous.get(k) or "")[:400] for k in ("phase", "diagnosis_excerpt", "verification_excerpt")}}
-    # Server data can contain credentials too; redact before packing.
+    background = historical_context(state, human)
+    if background is not None:
+        prompt["historical_context_unverified"] = background
     prompt = json.loads(redact_output(prompt))
     required = set(facts["business_evidence_ids"] + facts["configuration_evidence_ids"] + facts["resource_evidence_ids"])
     latest = next((h for h in reversed(history) if h.get("results")), {})
     latest_ids = {eid for r in latest.get("results", []) for eid in r.get("evidence_ids", [])}
-    protected = required | {e["evidence_id"] for e in state.get("evidence", []) if e.get("request_id")}
-    evidence = sorted(state.get("evidence", []), key=lambda e: (
-        e["evidence_id"] not in latest_ids, not bool(e.get("request_id")), e["evidence_id"] not in required))
-    # Count the omission inventory from the start; appending it after packing
-    # could itself overflow the input budget. Admit short excerpts fairly before
-    # spending spare space on one large baseline/configuration/log record.
+    evidence = unique_evidence(state.get("evidence", []))
+    protected = required | {e["evidence_id"] for e in evidence if e.get("request_id")}
+    evidence = sorted(evidence, key=lambda e: (
+        e["evidence_id"] not in protected, e["evidence_id"] not in latest_ids,
+        e["evidence_id"] not in required))
     prompt["omitted_evidence_ids"] = [e["evidence_id"] for e in evidence]
-    expansions = []
+    # Required snapshots and completed samples are packed BEFORE optional rows.
+    # Keep an entire valid compact JSON view; never cut a JSON string mid-field.
+    selected = []
     for item in evidence:
-        text = evidence_text(item)
-        size = 900 if item.get("request_id") else 600
-        block = {"evidence_id": item["evidence_id"], "resource_type": item["resource_type"],
-            "resource_name": item["resource_name"], "collected_at": item.get("collected_at"),
-            "error": item.get("error"), "coverage": item.get("coverage", "baseline_snapshot"),
-            "excerpt": text[:240], "excerpt_truncated": True, "projection": "selected_fields_or_grouped_logs"}
+        block = card_block(item)
         prompt["evidence"].append(block)
         prompt["available_evidence_ids"].append(item["evidence_id"])
         prompt["omitted_evidence_ids"].remove(item["evidence_id"])
-        if estimate(prompt) > INPUT_LIMIT - 1200:
+        if estimate(prompt) > INPUT_LIMIT - 900:
             prompt["evidence"].pop()
             prompt["available_evidence_ids"].pop()
             prompt["omitted_evidence_ids"].append(item["evidence_id"])
         else:
-            expansions.append((block, text, size))
-    if latest_ids.intersection(e["evidence_id"] for e in evidence) - set(prompt["available_evidence_ids"]):
-        # Do not pay for another decision that cannot see the last collection.
-        raise ValueError("LATEST_TOOL_EVIDENCE_NOT_IN_CONTEXT")
-    if protected - set(prompt["available_evidence_ids"]):
-        raise ValueError("REQUIRED_EVIDENCE_NOT_IN_CONTEXT")
+            selected.append(item)
+    visible = set(prompt["available_evidence_ids"])
+    if latest_ids.intersection(e["evidence_id"] for e in evidence) - visible:
+        raise ContextAssemblyError("LATEST_TOOL_EVIDENCE_NOT_IN_CONTEXT", prompt)
+    if protected - visible:
+        raise ContextAssemblyError("REQUIRED_EVIDENCE_NOT_IN_CONTEXT", prompt)
     for resource in manifest["resources"]:
         prompt["resources"].append(resource)
-        if estimate(prompt) > INPUT_LIMIT - 650:
+        if estimate(prompt) > INPUT_LIMIT - 450:
             prompt["resources"].pop()
             break
-    for block, text, size in expansions:
-        short = block["excerpt"]
-        block["excerpt"] = text[:size]
-        if estimate(prompt) > INPUT_LIMIT - 650:
-            block["excerpt"] = short
+    # The same selector serves final-only diagnosis; it expands evidence before
+    # runbooks instead of adding another summary model or a second evidence copy.
+    for index, item in enumerate(selected):
+        short = prompt["evidence"][index]
+        prompt["evidence"][index] = card_block(item, expanded=True)
+        if estimate(prompt) > INPUT_LIMIT - 450:
+            prompt["evidence"][index] = short
     for item in state.get("retrieved_runbooks", [])[:2]:
-        block = {"runbook_id": item["runbook_id"], "excerpt": redact_output(item.get("content", ""))[:350]}
+        block = {"runbook_id": item["runbook_id"], "excerpt": json.loads(redact_output(str(item.get("content") or "")))[:350]}
         prompt["runbooks"].append(block)
         prompt["available_runbook_ids"].append(item["runbook_id"])
         if estimate(prompt) > INPUT_LIMIT - 200:
             prompt["runbooks"].pop()
             prompt["available_runbook_ids"].pop()
     if estimate(prompt) > INPUT_LIMIT:
-        raise ValueError("INVESTIGATION_CONTEXT_TOO_LARGE")
+        raise ContextAssemblyError("INVESTIGATION_CONTEXT_TOO_LARGE", prompt)
     return prompt

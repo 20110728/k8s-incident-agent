@@ -49,6 +49,16 @@ def call_model(model, budget, prompt, request_id, *, decision_key=None, terminal
         request_id=request_id, fingerprint=digest(prompt), decision_key=decision_key,
         keep_tokens=0 if terminal else CALL_TOKENS, keep_seconds=0 if terminal else CALL_SECONDS,
         metadata={"purpose": "terminal" if terminal else "decision", "input_estimate": estimate(prompt),
+                  "context_version": prompt.get("context_version"), "context_purpose": prompt.get("purpose"),
+                  "working_state": prompt.get("working_state"),
+                  "selection": [{"evidence_id": e["evidence_id"], "representation": e.get("projection"),
+                                 "excerpt_digest": digest(e.get("excerpt")),
+                                 "reason": "required_fact" if e["evidence_id"] in set(
+                                     prompt.get("policy_facts", {}).get("business_evidence_ids", []) +
+                                     prompt.get("policy_facts", {}).get("resource_evidence_ids", []) +
+                                     prompt.get("policy_facts", {}).get("configuration_evidence_ids", [])) else "investigation_or_background"}
+                                for e in prompt.get("evidence", [])],
+                  "omission_reason": "input_budget",
                   "context_evidence": [{k: e.get(k) for k in ("evidence_id", "resource_type", "coverage", "error", "excerpt_truncated")}
                                        for e in prompt.get("evidence", [])],
                   "omitted_evidence_ids": prompt.get("omitted_evidence_ids", []),

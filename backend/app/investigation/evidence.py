@@ -1,5 +1,6 @@
 """Append-only observations; current view replaces only a matching evidence slot."""
 from copy import deepcopy
+from datetime import datetime
 from backend.app.investigation.records import digest
 
 
@@ -13,17 +14,35 @@ def active_evidence(baseline, observations):
     # rather than silently turning ambiguous input into one apparently valid row.
     current = deepcopy(baseline.get("evidence", []))
     for item in observations:
-        for kind, name in item.get("invalidates", []):
-            current = [value for value in current if not (
-                value.get("resource_type") == kind and (value.get("resource_name") == name or
-                kind == "BusinessCheck" and value.get("resource_name", "").startswith(name + "/")))]
-        if item.get("invalidates_log"):
-            name, container, previous = item["invalidates_log"]
-            current = [value for value in current if not (
-                value.get("resource_type") == "PodLogs" and value.get("resource_name") == name and
-                value.get("data", {}).get("container_name") in (None, container) and
-                value.get("data", {}).get("previous", False) == previous)]
-        current = [value for value in current if slot(value) != slot(item)]
+        def matches(value):
+            old, new = value.get("data", {}), item.get("data", {})
+            if old.get("namespace") and new.get("namespace") and old["namespace"] != new["namespace"]:
+                return False
+            # A recreated object is a conflict, not a newer version of one UID.
+            if value.get("resource_type") == item.get("resource_type") and old.get("uid") and new.get("uid") and old["uid"] != new["uid"]:
+                return False
+            if slot(value) == slot(item):
+                return True
+            for kind, name in item.get("invalidates", []):
+                if value.get("resource_type") == kind and (value.get("resource_name") == name or
+                        kind == "BusinessCheck" and value.get("resource_name", "").startswith(name + "/")):
+                    return True
+            if item.get("invalidates_log"):
+                name, container, previous = item["invalidates_log"]
+                return (value.get("resource_type") == "PodLogs" and value.get("resource_name") == name and
+                        old.get("container_name") in (None, container) and old.get("previous", False) == previous)
+            return False
+        replaced = [value for value in current if matches(value)]
+        def timestamp(value):
+            try:
+                result = datetime.fromisoformat(value.get("collected_at", "").replace("Z", "+00:00"))
+                return result if result.tzinfo else None
+            except (ValueError, AttributeError):
+                return None
+        sampled = timestamp(item)
+        if sampled is not None and any(timestamp(value) is not None and timestamp(value) > sampled for value in replaced):
+            continue  # Out-of-order replay must not replace a newer observation.
+        current = [value for value in current if not matches(value)]
         current.append(deepcopy(item))
     return current
 
@@ -72,4 +91,8 @@ def adapt(result, request, ref):
 
 def current_state(baseline, observations):
     state = {**baseline, "evidence": active_evidence(baseline, observations)}
+    active_ids = {row["evidence_id"] for row in state["evidence"]}
+    state["historical_evidence_ids"] = list(dict.fromkeys(
+        row["evidence_id"] for row in [*baseline.get("evidence", []), *observations]
+        if row["evidence_id"] not in active_ids))
     return state

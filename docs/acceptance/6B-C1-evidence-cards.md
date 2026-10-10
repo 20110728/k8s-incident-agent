@@ -1,6 +1,6 @@
 # 6B-C1：程序预处理
 
-状态：已实现，待 ECS 验收。本块只落地程序提取及只读检查入口；C2 才切换调查上下文，当前浏览器 `REQUIRED_EVIDENCE_NOT_IN_CONTEXT` 不宣称已修复。
+状态：维护者已反馈 `PASS: 6B-C1 ECS acceptance.`。本块只落地程序提取及只读检查入口；C2 才切换调查上下文，当前浏览器 `REQUIRED_EVIDENCE_NOT_IN_CONTEXT` 不宣称已修复。
 
 ## 核心机制
 
