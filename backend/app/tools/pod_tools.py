@@ -12,8 +12,8 @@ from backend.app.tools.client import (
     KubernetesClients,
 )
 
-MAX_LOG_LINES = 500
-MAX_LOG_CHARACTERS = 20_000
+MAX_LOG_LINES = 1000
+MAX_LOG_CHARACTERS = 240_000
 
 
 def _to_isoformat(

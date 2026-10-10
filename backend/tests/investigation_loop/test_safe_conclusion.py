@@ -27,7 +27,7 @@ def test_collection_and_diagnosis_have_separate_correction_then_finish(case, cor
             ref = next(r["resource_ref"] for r in prompt["resources"] if r["kind"] == "pod")
             request = {"tool": "pod_events" if n == 3 else "pod_logs", "resource_ref": ref}
             if n != 3:
-                request.update(previous=n == 4, tail_lines=200 if n == 2 else 100)
+                request.update(previous=n == 4, tail_lines=100)
             return {"action": "collect", "reason": "Inspect evidence", "missing_fact": "Readiness failure cause",
                     "evidence_ids": prompt["available_evidence_ids"][:1], "requests": [request]}
         value = conclusion(prompt, "unknown")

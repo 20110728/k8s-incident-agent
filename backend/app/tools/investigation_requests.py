@@ -20,7 +20,7 @@ class RequestBase(BaseModel):
 class LogRequest(RequestBase):
     tool: Literal["pod_logs"]
     previous: bool = False
-    tail_lines: int = Field(default=100, ge=1, le=200)
+    tail_lines: int = Field(default=100, ge=1, le=1000)
 
 
 class ResourceRequest(RequestBase):
@@ -50,7 +50,7 @@ class ToolRequest(BaseModel):
     tool: Literal["resource_summary", "registered_business", "pod_logs", "pod_events", "endpoint_slice", "deployment", "replica_set"]
     resource_ref: str = Field(pattern=r"^ref-[a-f0-9]{24}$")
     previous: bool = False
-    tail_lines: int = Field(default=100, ge=1, le=200)
+    tail_lines: int = Field(default=100, ge=1, le=1000)
 
     @model_validator(mode="before")
     @classmethod

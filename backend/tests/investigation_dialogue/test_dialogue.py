@@ -222,9 +222,9 @@ def test_staleness_uses_server_time_and_cannot_be_declared_by_model(case):
         authorize_sample(budget, box, request, "third", "stale", [])
 
 
-def test_unverified_change_text_and_line_count_do_not_authorize_resampling(case):
+def test_unverified_change_and_same_window_do_not_authorize_resampling(case):
     budget, box, _ = case
-    request = {**sampled(case), "tail_lines": 101}
+    request = sampled(case)
     with pytest.raises(ValueError, match="NO_CONFIRMED_CHANGE_FOR_QUERY"):
         authorize_sample(budget, box, request, "repeat", "user_change", [])
     with pytest.raises(ValueError, match="RESAMPLE_REASON_REQUIRED"):

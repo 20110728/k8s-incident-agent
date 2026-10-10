@@ -83,7 +83,7 @@ def test_card_context_is_valid_json_single_representation_and_round_trip_stable(
     prompt = build_context(current, case[1].manifest(), [])
     assert estimate(prompt) <= INPUT_LIMIT and current == original
     assert "UNNEEDED-BODY" not in json.dumps(prompt)
-    assert all(e["projection"] == "evidence-card-v1" and json.loads(e["excerpt"]) for e in prompt["evidence"])
+    assert all(e["projection"] in {"evidence-card-v1", "saved-evidence-raw-v1"} and json.loads(e["excerpt"]) for e in prompt["evidence"])
     assert len(prompt["available_evidence_ids"]) == len(set(prompt["available_evidence_ids"]))
     with storage[0]() as connection:
         restored = connection.execute("SELECT %s::jsonb AS state", (Jsonb(current),)).fetchone()["state"]

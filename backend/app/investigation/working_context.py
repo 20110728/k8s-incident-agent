@@ -2,11 +2,11 @@
 from copy import deepcopy
 import json
 
-from backend.app.investigation.cards import evidence_card, VERSION as CARD_VERSION
+from backend.app.investigation.cards import evidence_card, clean, VERSION as CARD_VERSION
 from backend.app.investigation.records import digest
 from backend.app.tools.investigation import redact_output
 
-VERSION = "investigation-context-v2.3"
+VERSION = "investigation-context-v2.4-raw"
 
 
 def text(value, limit):
@@ -168,3 +168,24 @@ def model_fields(card):
                   "sampled_lines": logs["scanned_lines"], "omitted_lines": logs["omitted_lines"],
                   "omitted_groups": logs["omitted_groups"], "omitted_group_occurrences": logs["omitted_group_occurrences"]}
     return fields
+
+
+def raw_block(item, text_limit=None):
+    """Original saved fields, redacted; log clipping is explicit, never a summary."""
+    block = card_block(item)
+    data = clean(deepcopy(item.get("data", {})))
+    clipped = False
+    if isinstance(data, dict) and "payload" in data and data.get("payload_complete"):
+        data.pop("text", None)
+    if isinstance(data, dict) and text_limit is not None:
+        for key in ("content", "text"):
+            value = data.get(key)
+            if isinstance(value, str) and len(value) > text_limit:
+                half = text_limit // 2
+                data[key] = value[:half] + "\n...[input budget: middle omitted]...\n" + value[-half:]
+                clipped = True
+    block.update(excerpt=json.dumps(data, sort_keys=True, ensure_ascii=False, separators=(",", ":")),
+                 projection="saved-evidence-raw-v1", excerpt_truncated=clipped,
+                 input_body_clipped=clipped)
+    block.pop("projection_omitted", None)
+    return block

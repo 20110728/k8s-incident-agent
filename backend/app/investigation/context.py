@@ -6,7 +6,7 @@ from backend.app.investigation.contracts import Decision, TOOL_GUIDE
 from backend.app.tools.investigation import redact_output
 from backend.app.investigation.compact import compact_history
 from backend.app.investigation.working_context import (
-    VERSION, human_context, historical_context, working_state, unique_evidence, card_block,
+    VERSION, human_context, historical_context, working_state, unique_evidence, card_block, raw_block,
 )
 
 INPUT_LIMIT = 16000
@@ -22,7 +22,7 @@ For collect state the missing fact and expected usefulness. Choose 1 tool, or at
 Keep reason and missing_fact concise (prefer at most 120 Chinese characters each); cite evidence IDs instead of repeating all observed facts.
 Use only provided resource_ref and evidence IDs. Tools may be partial or fail: neither proves health. Current logs may suggest a dependency cause but cannot confirm the downstream root cause. Previous logs are historical.
 Container current state is separate from historical_only. Past OOMKilled/exit codes/restart counts do not prove the present fault. To inspect the previous container instance request previous=true; current logs cannot establish what preceded a past exit. Select the log instance that matches your missing fact.
-Do not repeat a query because other evidence changed or request a different line count to bypass duplication. Stop if no effective allowed alternative remains.
+For logs prefer requesting 1000 lines initially. One strictly larger log window is allowed per object/container/previous combination without resample_reason; this still costs one tool request. Otherwise do not repeat a query just because evidence is insufficient. Conclude unknown if no useful alternative remains.
 History requests/results describe completed attempts. Read their current evidence excerpts before selecting another tool; an omitted or truncated excerpt is not permission to repeat the same query.
 For conclude/propose provide a CurrentDiagnosis consistent with policy_facts, cite required resource/business/configuration facts. Runtime/dependency root causes remain suspected; claims are not cluster evidence.
 Follow diagnosis_contract for category/domain meanings and blocked configuration categories. Unknown with grounded symptoms and explicit missing evidence is a valid conclusion; do not force a root-cause category merely to finish.
@@ -100,12 +100,14 @@ def build_context(state, manifest, history, *, terminal_only=False, feedback=Non
         if estimate(prompt) > INPUT_LIMIT - 450:
             prompt["resources"].pop()
             break
-    # The same selector serves final-only diagnosis; it expands evidence before
-    # runbooks instead of adding another summary model or a second evidence copy.
-    for index, item in enumerate([] if _compact else selected):
+    # Reserve every required card first, then replace with saved raw bodies.
+    # Never discard other required evidence to fit one large log.
+    for index, item in enumerate(selected):
         short = prompt["evidence"][index]
-        prompt["evidence"][index] = card_block(item, expanded=True)
-        if estimate(prompt) > INPUT_LIMIT - 450:
+        for limit in (None, 16000, 8000, 4000, 2000, 1000, 500):
+            prompt["evidence"][index] = raw_block(item, text_limit=limit)
+            if estimate(prompt) <= INPUT_LIMIT - 450:
+                break
             prompt["evidence"][index] = short
     for item in state.get("retrieved_runbooks", [])[:2]:
         block = {"runbook_id": item["runbook_id"], "excerpt": json.loads(redact_output(str(item.get("content") or "")))[:350]}

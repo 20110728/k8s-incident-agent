@@ -72,8 +72,8 @@ def test_bytes_are_decoded_before_redaction_grouping_and_next_model_call(case):
         assert set(facts["configuration_evidence_ids"] + facts["business_evidence_ids"]) <= visible
         logs = [json.loads(e["excerpt"]) for e in prompt["evidence"] if e["resource_type"] == "PodLogs"]
         assert len(logs) == 2
-        assert all(log["groups"][0]["count"] == 100 and log["sampled_lines"] == 100 for log in logs)
-        assert all(log["groups"][0]["first_timestamp"] is not None for log in logs)
+        assert all(log.get("content", "").count("\n") == 100 for log in logs)
+        assert all(log["content"].startswith("2026-10-10T") for log in logs)
         return stop(prompt)
     model = Model(choose)
     with session(case, model) as (_, _, advance):
@@ -134,9 +134,9 @@ def test_invalid_utf8_is_failed_observation_not_fake_log(case):
 def test_bytes_redaction_precedes_plain_text_limit(case):
     box = case[1]
     box.clients.core.api.read_namespaced_pod_log.return_value = (
-        "Authorization: Bearer private-secret\n" + "line\n" * 4000).encode()
+        "Authorization: Bearer private-secret\n" + "line\n" * 50000).encode()
     resource = next(k for k, ref in box.refs.items() if ref["kind"] == "pod")
     result = box.call({"tool": "pod_logs", "resource_ref": resource}, request_id="large-bytes")
-    assert result["payload"] == result["text"] and len(result["text"]) == 12000
+    assert result["payload"] == result["text"] and len(result["text"]) == 240000
     assert "private-secret" not in result["text"] and "\n" in result["text"]
     assert result["coverage"] == "partial" and result["truncated"]

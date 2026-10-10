@@ -7,4 +7,4 @@ if __name__ == "__main__":
         "backend/tests/investigation_loop", "backend/tests/investigation_dialogue",
         "backend/tests/investigation_production",
         "backend/tests/investigation/test_tools.py", "backend/tests/unit/test_service_and_pod_tools.py",
-    ), required_reports=("working-context.json", "c2-fix.json", "c2-robustness.json", "diagnosis-contract.json", "safe-conclusion.json", "evidence-change.json", "human-resampling.json", "production-flow.json")))
+    ), required_reports=("working-context.json", "c2-fix.json", "c2-robustness.json", "diagnosis-contract.json", "safe-conclusion.json", "raw-evidence.json", "evidence-change.json", "human-resampling.json", "production-flow.json")))

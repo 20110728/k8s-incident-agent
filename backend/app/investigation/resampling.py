@@ -8,6 +8,17 @@ FRESHNESS_SECONDS = {"resource_summary": 30, "registered_business": 30, "endpoin
                      "pod_logs": 60, "pod_events": 60, "deployment": 60, "replica_set": 60}
 
 
+def can_expand_logs(data, semantic_key, request):
+    """One strictly larger log window per identity/instance, within tool budget."""
+    prior = [c for c in data.get("calls", {}).values() if c["kind"] == "tool"
+             and c.get("metadata", {}).get("semantic_key") == semantic_key]
+    return bool(request.get("tool") == "pod_logs" and prior
+                and all(c.get("result") and not c["result"].get("error_code")
+                        and c["result"].get("coverage") != "unknown" for c in prior)
+                and request.get("tail_lines", 100) > max(c["metadata"]["request"].get("tail_lines", 100) for c in prior)
+                and not any(c["metadata"].get("sampling_basis") == "log_window_expansion" for c in prior))
+
+
 def authorize_sample(budget, toolbox, request, request_id, reason, answers):
     semantic_key = toolbox.query_key(request)
     fingerprint = digest([request, reason, [a["message_id"] for a in answers]])
@@ -28,11 +39,14 @@ def authorize_sample(budget, toolbox, request, request_id, reason, answers):
                 raise IncompleteRequest("REQUEST_OUTCOME_UNKNOWN")
             if result.get("error_code") or result.get("coverage") == "unknown":
                 raise ValueError("FAILED_SAMPLE_REQUIRES_NEW_RUN")
-            if request.get("previous"):
+            expansion = reason is None and can_expand_logs(data, semantic_key, request)
+            if request.get("previous") and not expansion:
                 raise ValueError("HISTORICAL_LOG_RESAMPLE_NOT_ALLOWED")
             collected = datetime.fromisoformat(result["collected_at"])
             generation = last["metadata"].get("sample_generation", 0) + 1
-            if reason == "user_change":
+            if expansion:
+                basis = "log_window_expansion"
+            elif reason == "user_change":
                 # Only consume a receipt already accepted by the human boundary.
                 receipts = data.get("investigation_answers", {})
                 candidates = [a for a in answers if a.get("slot") == "changes" and not a["skip"] and

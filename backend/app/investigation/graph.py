@@ -17,7 +17,7 @@ from backend.app.investigation.records import bind_baseline, correction, Incompl
 from backend.app.runtime.budget import BudgetExceeded
 from backend.app.persistence.leases import LeaseLost
 from backend.app.investigation.dialogue import VERSION, question_for, accept_answer
-from backend.app.investigation.resampling import authorize_sample, FRESHNESS_SECONDS
+from backend.app.investigation.resampling import authorize_sample, FRESHNESS_SECONDS, can_expand_logs
 from backend.app.agent.state import IncidentState
 from backend.app.services.round_context import INVESTIGATION_WORKFLOW
 from backend.app.investigation.diagnostics import record_validation, error_detail
@@ -174,7 +174,8 @@ def build_investigation_graph(budget, toolbox, model, *, checkpointer=None, inte
                         with budget.edit() as data:
                             prior_keys = {c.get("metadata", {}).get("semantic_key") for c in data["calls"].values()
                                           if c["kind"] == "tool"}
-                        if any(toolbox.query_key(r) in prior_keys for r in decision["requests"]):
+                        if any(toolbox.query_key(r) in prior_keys and not can_expand_logs(data, toolbox.query_key(r), r)
+                               for r in decision["requests"]):
                             raise ValueError("RESAMPLE_REASON_REQUIRED: query already attempted; use saved evidence, select a useful different query, or stop. Do not invent a change or staleness.")
                     if interactive and decision["action"] == "ask_user":
                         question_for(state, decision, budget, toolbox.manifest(), current["evidence"])

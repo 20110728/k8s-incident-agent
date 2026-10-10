@@ -178,7 +178,7 @@ class ReadOnlyToolbox:
                     # Keep line breaks as text, including when bounded. A cut
                     # JSON-encoded string cannot safely be parsed on recovery.
                     plain = json.loads(text)
-                    result.update(text=plain[:12000], payload=plain[:12000],
+                    result.update(text=plain[:240000], payload=plain[:240000],
                                   truncated=True, coverage="partial")
                     text = None
                 if text is not None:
@@ -215,7 +215,7 @@ class ReadOnlyToolbox:
             return checks, any(c["status"] in {"unknown", "skipped"} for c in checks)
         if request.tool == "pod_logs":
             value = self.clients.core.read_namespaced_pod_log(name=name, namespace=ns, container=ref["container"],
-                previous=request.previous, tail_lines=request.tail_lines, limit_bytes=12000, timestamps=True, _preload_content=False, _request_timeout=(3, 10))
+                previous=request.previous, tail_lines=request.tail_lines, limit_bytes=240000, timestamps=True, _preload_content=False, _request_timeout=(3, 10))
             return read_log_response(value), True  # A tail never proves absence of older faults.
         if request.tool == "pod_events":
             events = self.clients.core.list_namespaced_event(namespace=ns,
