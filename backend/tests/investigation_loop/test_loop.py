@@ -206,10 +206,10 @@ def test_atomic_request_claim_and_global_model_attempt_cap(case):
         return budget.reserve("investigation_model", request_id="same", fingerprint="same")[1]
     with ThreadPoolExecutor(max_workers=4) as pool:
         assert sum(pool.map(claim, range(4))) == 1
-    for n in range(4):
+    for n in range(5):
         budget.reserve("investigation_model", request_id=str(n), fingerprint=str(n))
     with pytest.raises(BudgetExceeded, match="MODEL_ATTEMPT_LIMIT"):
-        budget.reserve("investigation_model", request_id="sixth", fingerprint="sixth")
+        budget.reserve("investigation_model", request_id="seventh", fingerprint="seventh")
 
 
 def test_checkpoint_resume_after_tools_does_not_repeat_completed_request(case, storage):

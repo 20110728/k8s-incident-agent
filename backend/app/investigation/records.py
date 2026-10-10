@@ -28,11 +28,18 @@ def bind_baseline(budget, baseline, version="readonly-investigation-v1"):
             raise ValueError("INVESTIGATION_BASELINE_CHANGED")
 
 
-def correction(budget, request_id):
+def correction(budget, request_id, *, diagnosis=False, tokens=0, seconds=0):
     with budget.edit() as data:
         progress = data["investigation"]
-        existing = progress.get("correction_for")
+        key = "diagnosis_correction_for" if diagnosis else "correction_for"
+        existing = progress.get(key)
         if existing and existing != request_id:
             return False
-        progress["correction_for"] = request_id
+        if diagnosis and not existing:
+            policy = data["policy"]
+            if (data["tokens"] + tokens > policy["total_tokens"]
+                    or data["seconds"] + seconds > policy["active_seconds"]
+                    or sum(c["kind"] == "investigation_model" for c in data["calls"].values()) >= policy.get("model_attempts", 5)):
+                return False
+        progress[key] = request_id
         return True

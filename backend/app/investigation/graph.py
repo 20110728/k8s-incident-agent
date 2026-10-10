@@ -48,6 +48,10 @@ def handoff(state, code):
             "cluster_writes_executed": False}
 
 
+class DiagnosisAssessmentRejected(ValueError):
+    """A parsed diagnosis with valid references failed semantic assessment only."""
+
+
 def validate_decision(value, prompt, current, toolbox, terminal):
     raw = value.get("decision") if isinstance(value, dict) else None
     if isinstance(raw, dict) and raw.get("action") == "collect" and isinstance(raw.get("requests"), list):
@@ -81,14 +85,16 @@ def validate_decision(value, prompt, current, toolbox, terminal):
             if not set(claim.evidence_ids) <= allowed:
                 raise ValueError("CLAIM_REFERENCES_NOT_IN_CONTEXT")
         errors = []
+        reference_error = False
         for validator in (lambda: validate_diagnosis_references(diagnosis=diagnosis, state=current),
                           lambda: validate_diagnosis_assessment(diagnosis, current)):
             try:
                 validator()
             except (InvalidDiagnosisReference, InvalidDiagnosisAssessment) as error:
                 errors.append(str(error))
+                reference_error = reference_error or isinstance(error, InvalidDiagnosisReference)
         if errors:
-            raise ValueError("; ".join(errors))
+            raise (ValueError if reference_error else DiagnosisAssessmentRejected)("; ".join(errors))
         if diagnosis.fault_category == "no_fault_detected" and any(e.get("error") for e in current["evidence"]):
             raise ValueError("FAILED_OBSERVATION_CANNOT_PROVE_HEALTH")
         if diagnosis.fault_category == "no_fault_detected" and prompt.get("working_state", {}).get("identity_conflicts"):
@@ -185,9 +191,24 @@ def build_investigation_graph(budget, toolbox, model, *, checkpointer=None, inte
                     feedback = error_detail(error)
                     failures.append(record_validation(budget, request_id + (":correction" if attempt else ""),
                         step=step, attempt=attempt, error=error, response=response, prompt=prompt))
-                    if attempt or isinstance(error, ToolBoundaryError) or not correction(budget, request_id):
+                    parsed = response.get("parsed")
+                    raw = parsed.get("decision") if isinstance(parsed, dict) else None
+                    raw = raw if isinstance(raw, dict) else {}
+                    safe_diagnosis = (isinstance(error, DiagnosisAssessmentRejected) and raw.get("action") == "conclude"
+                                      and not prompt.get("working_state", {}).get("identity_conflicts"))
+                    if attempt or isinstance(error, ToolBoundaryError) or not correction(
+                            budget, request_id, diagnosis=safe_diagnosis, tokens=CALL_TOKENS, seconds=CALL_SECONDS):
+                        if safe_diagnosis:
+                            from backend.app.investigation.production import conservative_diagnosis
+                            diagnosis = conservative_diagnosis(current)
+                            return {"phase": "finished", "output": {
+                                "status": "conclude", "decision": {"action": "conclude", "diagnosis": diagnosis},
+                                "diagnosis_source": "program_evidence_only", "fallback_reason": "MODEL_ASSESSMENT_REJECTED",
+                                "validation_failures": failures, "cluster_writes_executed": False}}
                         return {"phase": "finished", "output": {**handoff(state, "DECISION_VALIDATION_FAILED"),
                                                                   "validation_failures": failures}}
+                    if safe_diagnosis:
+                        terminal = True  # Repair the report only; do not reopen collection.
             record = {"step": step, "action": decision["action"], "reason": decision.get("reason"),
                       "missing_fact": decision.get("missing_fact"), "evidence_ids": decision.get("evidence_ids", [])}
             if decision["action"] == "collect":
@@ -274,7 +295,8 @@ def build_investigation_graph(budget, toolbox, model, *, checkpointer=None, inte
         output = state["output"]
         decision = output.get("decision") or {}
         diagnosis = decision.get("diagnosis") or unknown_diagnosis(current, output)
-        update = {**current, "diagnosis": diagnosis, "diagnosis_model_output": decision.get("diagnosis")}
+        update = {**current, "diagnosis": diagnosis, "diagnosis_model_output":
+                  None if output.get("diagnosis_source") == "program_evidence_only" else decision.get("diagnosis")}
         if output["status"] == "propose_plan":
             try:
                 plan = deterministic_plan({**current, "diagnosis": diagnosis}, decision["candidate"])

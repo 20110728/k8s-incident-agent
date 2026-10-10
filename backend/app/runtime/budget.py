@@ -10,7 +10,7 @@ from uuid import uuid4
 from psycopg.types.json import Jsonb
 
 CURRENT = ContextVar("run_budget", default=None)
-POLICY = {"version": "investigation-budget-v3", "active_seconds": 300, "extra_seconds": 90,
+POLICY = {"version": "investigation-budget-v4", "model_attempts": 6, "active_seconds": 300, "extra_seconds": 90,
           "decisions": 3, "tools": 6, "input_tokens": 24000, "output_tokens": 4000, "total_tokens": 120000,
           "write_reserve_seconds": 150}
 
@@ -60,7 +60,7 @@ class RunBudget:
             policy = data["policy"]
             if decision_key and decision_key not in data["decisions"] and len(data["decisions"]) >= policy["decisions"]:
                 error = "INVESTIGATION_DECISION_LIMIT"
-            elif kind == "investigation_model" and sum(c["kind"] == kind for c in data["calls"].values()) >= 5:
+            elif kind == "investigation_model" and sum(c["kind"] == kind for c in data["calls"].values()) >= policy.get("model_attempts", 5):
                 error = "MODEL_ATTEMPT_LIMIT"
             elif kind == "tool" and key in data["tools"]:
                 error = "DUPLICATE_TOOL_EVIDENCE"

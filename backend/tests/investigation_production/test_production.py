@@ -95,6 +95,25 @@ def snapshot(system, row):
         return service.get_run_snapshot(system.repo.get_round(row["incident_id"], row["run_id"])).state
 
 
+def test_rejected_root_cause_publishes_program_report_without_plan(system):
+    def choose(prompt):
+        value = conclusion(prompt, "unknown")
+        value["diagnosis"].update(fault_category="application_error", root_cause="UNSUPPORTED_MODEL_CAUSE")
+        value["diagnosis"]["assessment"]["problem_domain"] = "application_runtime"
+        return value
+    system.model.choose = choose
+    row = system.create()
+    system.work()
+    result = snapshot(system, row)
+    assert system.repo.latest(row["incident_id"])["status"] == "succeeded"
+    assert result["output"]["status"] == "conclude"
+    assert result["output"]["diagnosis_source"] == "program_evidence_only"
+    assert result["diagnosis"]["fault_category"] == "unknown"
+    assert result["diagnosis_model_output"] is None
+    assert "UNSUPPORTED_MODEL_CAUSE" not in json.dumps(result["diagnosis"])
+    assert not result.get("requires_approval") and system.kube.calls == []
+
+
 def setup_drift(system, action="patch_service_selector"):
     drift(system.state, action)
     parsed = deepcopy(system.state.pop("diagnosis"))

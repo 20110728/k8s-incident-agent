@@ -81,3 +81,25 @@ def answer_for_investigation(payload, question):
     return {"question_id": payload["question_id"], "version": payload["version"], "message_id": payload["message_id"],
             "text": "" if payload["skip"] else payload["answers"][slot], "skip": payload["skip"],
             "changed_resource_refs": payload.get("changed_resource_refs", [])}
+
+
+def conservative_diagnosis(current):
+    """Publish saved facts only; never adopt the rejected model's root cause or plan."""
+    from backend.app.agent.diagnosis_policy import validate_diagnosis_assessment
+    from backend.app.agent.nodes import validate_diagnosis_references
+    value = unknown_diagnosis(current, {"stop_reason": "MODEL_ASSESSMENT_REJECTED"})
+    value["root_cause"] = "调查已收尾，现有证据不足以确定根因。"
+    value["reasoning_summary"] = value["reasoning_summary"].replace(
+        "程序交接：MODEL_ASSESSMENT_REJECTED",
+        "模型根因判断未通过证据校验；本报告由程序根据已保存事实生成，未采纳被拒绝的分类或根因。")
+    facts = diagnostic_facts(current)
+    for key, status, label in (("resource_evidence_ids", "resource_status", "资源"),
+                               ("business_evidence_ids", "business_status", "登记业务检查")):
+        ids = facts[key]
+        if ids:
+            value["assessment"]["symptoms"].append({"summary": f"采样时{label}状态：{facts[status]}；不代表当前已恢复。",
+                                                    "evidence_ids": ids[:20]})
+    diagnosis = CurrentDiagnosis.model_validate(value)
+    validate_diagnosis_references(diagnosis=diagnosis, state=current)
+    validate_diagnosis_assessment(diagnosis, current)
+    return diagnosis.model_dump(mode="json")

@@ -88,6 +88,8 @@ def brief_debug_report(row, data):
     known_usage = [n for n in known_usage if type(n) is int and n >= 0]
     report = {
         "report_version": "brief-v1", "run": full["run"], "stop_reason": full["stop_reason"],
+        "outcome": {k: ((row.get("output_snapshot") or {}).get("output") or {}).get(k)
+                    for k in ("status", "diagnosis_source", "fallback_reason")},
         "budget": {"policy": data.get("policy"), "charged_or_reserved_tokens": data.get("tokens"),
                    "reported_model_tokens": sum(known_usage), "model_calls_missing_usage": len(models) - len(known_usage),
                    "exhausted": data.get("exhausted")},
