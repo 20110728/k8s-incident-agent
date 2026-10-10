@@ -165,7 +165,9 @@ def test_user_text_does_not_prove_current_health_after_wait(case):
 
 def test_explicit_change_allows_one_new_sample_preserving_old_observation(case):
     def choose(prompt):
-        if prompt["terminal_only"]: return stop(prompt)
+        if len(prompt["history"]) == 3:
+            assert not prompt["terminal_only"]  # Finish voluntarily after the authorized refresh.
+            return stop(prompt)
         if len(prompt["history"]) == 1: return ask(prompt)
         value = collect(prompt)
         if prompt["history"]: value["resample_reason"] = "user_change"
@@ -246,16 +248,26 @@ def test_staleness_does_not_bypass_failure_or_unknown_outcome(case, mode):
     assert box.clients.core.api.read_namespaced_pod_log.call_count == 1
 
 
-def test_valid_sampling_grant_never_bypasses_run_budget(case):
+@pytest.mark.parametrize("extra_limit", [None, 90], ids=["unlimited", "legacy-limit"])
+def test_valid_sampling_grant_respects_frozen_budget_policy(case, extra_limit):
     budget, box, _ = case
     request = sampled(case)
     age_sample(budget)
     grant = authorize_sample(budget, box, request, "repeat", "stale", [])
     with budget.edit() as data:
-        data["extra_seconds"] = data["policy"]["extra_seconds"]
-    with pytest.raises(BudgetExceeded, match="ACTIVE_TIME_LIMIT"):
-        box.call(request, request_id="repeat", sampling=grant)
-    assert box.clients.core.api.read_namespaced_pod_log.call_count == 1
+        data["policy"]["extra_seconds"] = extra_limit
+        data["extra_seconds"] = 90  # Usage is always numeric, even with no ceiling.
+    if extra_limit is None:
+        result = box.call(request, request_id="repeat", sampling=grant)
+        assert result["error_code"] is None
+        assert box.call(request, request_id="repeat", sampling=grant) == result
+        assert box.clients.core.api.read_namespaced_pod_log.call_count == 2
+        saved = budget_snapshot(budget)
+        assert saved["extra_seconds"] >= 90 and saved["exhausted"] is None
+    else:
+        with pytest.raises(BudgetExceeded, match="ACTIVE_TIME_LIMIT"):
+            box.call(request, request_id="repeat", sampling=grant)
+        assert box.clients.core.api.read_namespaced_pod_log.call_count == 1
 
 
 def test_change_receipt_is_resource_scoped_and_can_only_be_used_once(case):

@@ -66,6 +66,10 @@ def test_three_rounds_then_invalid_category_corrects_to_grounded_unknown(case):
         value = conclusion(prompt, "unknown")
         if n == 4:
             value["diagnosis"]["fault_category"] = "readiness_probe_error"
+            # Isolate the semantic conflict: configuration diagnoses must also
+            # cite an available runbook, otherwise this tests a reference error.
+            assert prompt["available_runbook_ids"]
+            value["diagnosis"]["runbook_ids"] = prompt["available_runbook_ids"][:1]
             value["diagnosis"]["assessment"]["problem_domain"] = "application_runtime"
         else:
             assert "actual_domain=application_runtime" in prompt["feedback"]
@@ -90,6 +94,9 @@ def test_three_rounds_then_invalid_category_corrects_to_grounded_unknown(case):
     with budget.edit() as data:
         failed = [c for c in data["calls"].values() if c.get("validation")]
         assert len(failed) == 1
+        assert failed[0]["validation"]["error_type"] == "DiagnosisAssessmentRejected"
+        assert data["investigation"].get("diagnosis_correction_for")
+        assert not data["investigation"].get("correction_for")
         assert failed[0]["validation_context"]["diagnosis_facts"]["readiness_drift"] is False
         saved = deepcopy(data)
     from backend.app.investigation.brief_debug import brief_debug_report

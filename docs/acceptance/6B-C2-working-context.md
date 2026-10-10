@@ -47,3 +47,5 @@ python -m scripts.export_investigation_debug --incident-id <事件ID> --brief
 ```
 
 本地：268 个 Python 文件 AST 与 `git diff --check` 通过；按约定未运行 pytest、数据库、模型或前端测试/构建，本地无前端依赖。ECS、真实模型/集群及浏览器结果待验证。
+
+本次验收用例修正：配置分类冲突用例补充合法 Runbook 引用，仅测试语义纠正；人工变更复采用例在一次合法复采后主动结束；预算用例分别验证无限额与旧数值上限，已用时间保持数字。模拟模型断言直接报告测试失败，不再被包装为供应商请求失败。仅修改测试与本文，无运行时代码变更；拉取后重跑 `bash scripts/accept_stage6bc2.sh`，本补丁无需迁移、重启或前端更新。

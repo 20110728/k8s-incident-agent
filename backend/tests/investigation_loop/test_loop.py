@@ -41,7 +41,21 @@ class Model:
 
     def invoke(self, prompt):
         self.prompts.append(deepcopy(prompt))
-        return {"parsed": {"decision": self.choose(prompt)}, "usage": {"total_tokens": 120}}
+        try:
+            decision = self.choose(prompt)
+        except AssertionError as error:
+            # pytest failures bypass the production provider Exception handler;
+            # a broken test scenario must not become MODEL_REQUEST_FAILED.
+            pytest.fail(f"Controlled model assertion failed: {error}")
+        return {"parsed": {"decision": decision}, "usage": {"total_tokens": 120}}
+
+
+def test_controlled_model_assertion_is_not_reported_as_provider_failure(case):
+    def choose(_):
+        assert False, "invalid scripted expectation"
+    prompt = build_context(case[1].state, case[1].manifest(), [])
+    with pytest.raises(pytest.fail.Exception, match="invalid scripted expectation"):
+        call_model(Model(choose), case[0], prompt, "scripted-assertion")
 
 
 def tool_request(prompt, tool="pod_logs", previous=False, index=0):
