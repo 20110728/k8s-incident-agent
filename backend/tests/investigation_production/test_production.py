@@ -95,6 +95,34 @@ def snapshot(system, row):
         return service.get_run_snapshot(system.repo.get_round(row["incident_id"], row["run_id"])).state
 
 
+def test_old_large_log_preview_and_run_bound_body_endpoint(system):
+    from backend.app.api.routes.rounds import get_round_repository
+    text = "historical log line\n" * 20000
+    system.state["evidence"].append({"evidence_id": "ev-old-log", "resource_type": "PodLogs",
+        "resource_name": "order-pod", "source": "kubernetes", "error": None,
+        "collected_at": "2026-10-11T00:00:00Z",
+        "data": {"content": text, "container_name": "order-service", "previous": False}})
+    row = system.create()
+    system.work()
+    with system.client() as (http, service):
+        http.app.dependency_overrides[get_round_repository] = lambda: system.repo
+        base = f"/api/v1/incidents/{row['incident_id']}"
+        for path in (base, base + f"/runs/{row['run_id']}"):
+            response = http.get(path)
+            assert response.status_code == 200, response.text
+            body = response.json().get("result", response.json())
+            log = next(e for e in body["evidence"] if e["evidence_id"] == "ev-old-log")
+            assert log["body_preview"]["truncated"] and len(log["data"]["content"]) == 2000
+            assert len(response.content) < len(text.encode()) // 2
+        full = http.get(base + f"/evidence/ev-old-log?run_id={row['run_id']}")
+        assert full.status_code == 200 and full.json()["evidence"]["data"]["content"] == text
+        assert http.get(base + f"/evidence/missing?run_id={row['run_id']}").status_code == 404
+        other = system.create()
+        assert http.get(base + f"/evidence/ev-old-log?run_id={other['run_id']}").status_code == 404
+        assert service.get_run_snapshot(system.repo.get_round(row["incident_id"], row["run_id"])).state["evidence"][-1]["data"]["content"] == text
+    assert len(system.model.prompts) == 1 and not system.kube.calls
+
+
 def test_rejected_root_cause_publishes_program_report_without_plan(system):
     def choose(prompt):
         value = conclusion(prompt, "unknown")

@@ -3,6 +3,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 from backend.app.investigation.presentation import investigation_view
+from backend.app.investigation.public_evidence import evidence_previews
 
 from backend.app.agent.schemas import (
     ActionExecutionResult,
@@ -165,7 +166,7 @@ class IncidentStatusResponse(BaseModel):
             collection_plan=list(
                 state.get("collection_plan") or []
             ),
-            evidence=list(
+            evidence=evidence_previews(
                 state.get("evidence") or []
             ),
             service_profile=state.get("service_profile"),

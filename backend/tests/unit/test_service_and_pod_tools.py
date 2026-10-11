@@ -198,7 +198,7 @@ def test_pod_status_extracts_oom_killed():
 def test_pod_logs_are_truncated():
     clients = make_clients()
 
-    clients.core.read_namespaced_pod_log.return_value = "x" * 250_000
+    clients.core.read_namespaced_pod_log.return_value = "x" * 300_000
 
     result = get_pod_logs(
         clients=clients,
@@ -207,9 +207,9 @@ def test_pod_logs_are_truncated():
         tail_lines=10_000,
     )
 
-    assert result.truncated is False
-    assert len(result.content) == 250_000
+    assert result.truncated is True
+    assert len(result.content) == 256 * 1024
 
     call_arguments = clients.core.read_namespaced_pod_log.call_args.kwargs
 
-    assert "tail_lines" not in call_arguments and "limit_bytes" not in call_arguments
+    assert call_arguments["tail_lines"] == 1000 and call_arguments["limit_bytes"] == 256 * 1024

@@ -1,7 +1,7 @@
 """Explicit next round API; message intent classification is deferred to 4B."""
 from functools import partial
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from backend.app.api.dependencies import get_incident_service
@@ -71,3 +71,25 @@ def read_round(incident_id: IncidentId, run_id: IncidentId,
     return {"result": _response_from_snapshot(result), "context": row["context_snapshot"],
             "parent_run_id": row["parent_run_id"], "source_message_id": row["source_message_id"],
             "input_message_sequence": row["input_message_sequence"], "workflow_version": row["workflow_version"]}
+
+
+@router.get("/{incident_id}/evidence/{evidence_id}")
+def read_saved_evidence(incident_id: IncidentId, evidence_id: IncidentId,
+                        run_id: str | None = Query(default=None, max_length=128, pattern=r"^[a-zA-Z0-9-]+$"),
+                        repo=Depends(get_round_repository), service=Depends(get_incident_service)):
+    """Read one saved observation, never recollect or call the model."""
+    import json
+    from backend.app.tools.investigation import redact_output
+    if run_id == "legacy":
+        snapshot = snapshot_read(lambda: service.get_legacy_snapshot(incident_id))
+    elif run_id is not None:
+        row = repo.get_round(incident_id, run_id)  # Enforces incident/run binding.
+        if row["run_kind"] != "diagnosis":
+            raise ApiError(status_code=404, code="EVIDENCE_NOT_FOUND", message="No diagnosis evidence in this run.")
+        snapshot = snapshot_read(lambda: service.get_run_snapshot(row))
+    else:
+        snapshot = snapshot_read(lambda: service.get_incident(incident_id))
+    item = next((e for e in snapshot.state.get("evidence", []) if e.get("evidence_id") == evidence_id), None)
+    if item is None:
+        raise ApiError(status_code=404, code="EVIDENCE_NOT_FOUND", message="Saved evidence was not found in this run.")
+    return {"evidence": json.loads(redact_output(item))}

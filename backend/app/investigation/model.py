@@ -1,5 +1,9 @@
 """One provider call per attempt; result and usage saved before graph advancement."""
 import time
+import json
+from datetime import UTC, datetime
+from backend.app.tools.investigation import redact_output
+from backend.app.investigation.exchange import final_response, provider_error
 from backend.app.investigation.context import SYSTEM, CALL_SECONDS, CALL_TOKENS, OUTPUT_LIMIT, encode, estimate
 from backend.app.investigation.contracts import Decision
 from backend.app.investigation.records import digest, saved_result
@@ -21,6 +25,7 @@ class InvestigationModel:
         return {"parsed": parsed.model_dump(mode="json") if isinstance(parsed, Decision) else parsed,
                 "parse_error": "STRUCTURED_OUTPUT_INVALID" if response.get("parsing_error") else None,
                 "diagnostics": provider_diagnostics(response),
+                "final_output": final_response(response.get("raw")),
                 "usage": getattr(response.get("raw"), "usage_metadata", None) or {}}
 
 
@@ -61,6 +66,14 @@ def call_model(model, budget, prompt, request_id, *, decision_key=None, terminal
                   "input_limit": None, "output_limit": OUTPUT_LIMIT, "estimate_source": "utf8_bytes_div_3_plus_schema_and_512"})
     if not fresh:
         return saved_result(budget, ticket)
+    # Persist before dispatch, outside provider exception handling. Storage/lease
+    # errors must never be mislabeled as provider failures. Keep only the latest input.
+    with budget.edit() as data:
+        data["last_model_input"] = {"ticket": ticket, "saved_at": datetime.now(UTC).isoformat(),
+            "input": json.loads(redact_output({
+                "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": encode(prompt)}],
+                "response_schema": Decision.model_json_schema(), "method": "json_schema", "strict": True,
+            }))}
     start = time.monotonic()
     try:
         budget.repo.assert_owned(budget.lease)
@@ -69,11 +82,13 @@ def call_model(model, budget, prompt, request_id, *, decision_key=None, terminal
         usage = {k: v for k, v in usage.items() if k in {"input_tokens", "output_tokens", "total_tokens"} and type(v) is int and v >= 0}
         actual = usage.get("total_tokens") or None
         result = {"parsed": response.get("parsed"), "parse_error": response.get("parse_error")}
+        if response.get("final_output") is not None:
+            result["final_output"] = response["final_output"]
         if response.get("diagnostics"):
             result["diagnostics"] = response["diagnostics"]
-        # Store the complete parsed decision, not raw SDK objects or a second prompt.
+        # Store serializable final output and parsed decision, never raw SDK objects.
     except Exception as error:
-        result, usage, actual = {"error": "MODEL_REQUEST_FAILED", "diagnostics": {"error_type": type(error).__name__}}, {}, None
+        result, usage, actual = {"error": "MODEL_REQUEST_FAILED", "diagnostics": provider_error(error)}, {}, None
     budget.settle(ticket, time.monotonic() - start, tokens=actual, usage=usage or None,
                   status="failed_or_unknown" if result.get("error") else "completed", result=result)
     return result

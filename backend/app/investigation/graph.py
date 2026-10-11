@@ -108,7 +108,7 @@ def validate_decision(value, prompt, current, toolbox, terminal):
         result["requests"] = [ToolRequest.model_validate(r).model_dump() for r in result["requests"]]
         for request in result["requests"]:
             if request["tool"] == "pod_logs":
-                request["tail_lines"] = None
+                request["tail_lines"] = 1000
     return result
 
 

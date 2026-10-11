@@ -10,6 +10,7 @@ from backend.app.persistence.settings import get_database_settings
 from backend.app.investigation.diagnostics import debug_report
 from backend.app.investigation.cards import saved_cards
 from backend.app.investigation.brief_debug import brief_debug_report
+from backend.app.investigation.exchange import last_exchange_report
 
 
 def main():
@@ -18,7 +19,10 @@ def main():
     parser.add_argument("--run-id", help="Defaults to the latest diagnosis run of this incident")
     parser.add_argument("--evidence-cards", action="store_true", help="Include bounded program-extracted saved evidence cards (no model calls)")
     parser.add_argument("--brief", action="store_true", help="Compact troubleshooting report including evidence parsing status; overrides --evidence-cards")
+    parser.add_argument("--last-llm", action="store_true", help="Export the last saved investigation model input/output into a separate file")
     args = parser.parse_args()
+    if args.last_llm and (args.brief or args.evidence_cards):
+        parser.error("--last-llm is a separate export; do not combine it with --brief/--evidence-cards")
     with connect_database(get_database_settings()) as connection:
         connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         condition = " AND run_id=%s" if args.run_id else ""
@@ -29,12 +33,12 @@ def main():
         if row is None:
             raise ValueError("INCIDENT_OR_RUN_NOT_FOUND")
         budget = connection.execute("SELECT payload FROM incident_agent_app.run_budgets WHERE run_id=%s", (row["run_id"],)).fetchone()
-        report = (brief_debug_report if args.brief else debug_report)(row, budget["payload"] if budget else {})
+        report = (last_exchange_report if args.last_llm else brief_debug_report if args.brief else debug_report)(row, budget["payload"] if budget else {})
         if args.evidence_cards and not args.brief:
             report["evidence_cards"] = saved_cards(row.get("output_snapshot"), budget["payload"] if budget else {})
     folder = Path("evals/results/investigation-debug")
     folder.mkdir(parents=True, exist_ok=True)
-    path = folder / (datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid4().hex[:8] + ("-brief.json" if args.brief else ".json"))
+    path = folder / (datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid4().hex[:8] + ("-last-llm.json" if args.last_llm else "-brief.json" if args.brief else ".json"))
     with path.open("x", encoding="utf-8") as stream:
         json.dump(report, stream, ensure_ascii=False, indent=2)
     print(f"run_id: {row['run_id']}")

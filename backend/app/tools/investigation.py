@@ -10,7 +10,7 @@ from backend.app.agent.target_identity import validate_relationships
 from backend.app.llm.context_builder import redact_sensitive_text
 from backend.app.service_profiles.registry import matched_profile, load_profile, profile_digest
 from backend.app.tools.deadline import read_budget
-from backend.app.tools.log_text import read_log_response
+from backend.app.tools.log_text import read_log_response, sample_log_text, LOG_LINES, LOG_BYTES
 from backend.app.tools.service_tools import get_service
 from backend.app.tools.workload_tools import get_deployment_config, resolve_pod_owner
 
@@ -119,7 +119,7 @@ class ReadOnlyToolbox:
         self.validate_boundary(payload)
         request = ToolRequest.model_validate(payload)
         if request.tool == "pod_logs":
-            request.tail_lines = None
+            request.tail_lines = LOG_LINES
         ref = self.refs.get(request.resource_ref)
         return request, ref
 
@@ -180,7 +180,7 @@ class ReadOnlyToolbox:
                     # Keep complete line breaks as text for recovery.
                     plain = json.loads(text)
                     result.update(text=plain, payload=plain,
-                                  truncated=False, coverage="partial")
+                                  truncated=limited, coverage="partial", log_window={"tail_lines": LOG_LINES, "limit_bytes": LOG_BYTES})
                     text = None
                 if text is not None:
                     result.update(text=text, truncated=limited and request.tool != "pod_events", coverage="partial" if limited else "observed",
@@ -213,8 +213,9 @@ class ReadOnlyToolbox:
             return checks, any(c["status"] in {"unknown", "skipped"} for c in checks)
         if request.tool == "pod_logs":
             value = self.clients.core.read_namespaced_pod_log(name=name, namespace=ns, container=ref["container"],
-                previous=request.previous, timestamps=True, _preload_content=False, _request_timeout=(3, 10))
-            return read_log_response(value), True  # The server may already have rotated older logs.
+                previous=request.previous, tail_lines=LOG_LINES, limit_bytes=LOG_BYTES,
+                timestamps=True, _preload_content=False, _request_timeout=(3, 10))
+            return sample_log_text(read_log_response(value))
         if request.tool == "pod_events":
             events = self.clients.core.list_namespaced_event(namespace=ns,
                 field_selector=f"involvedObject.uid={ref['uid']}", _request_timeout=(3, 10))

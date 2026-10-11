@@ -171,19 +171,20 @@ def get_pod_logs(
     previous: bool = False,
     tail_lines: int | None = None,
 ) -> PodLogInfo:
+    from backend.app.tools.log_text import read_log_response, sample_log_text, LOG_LINES, LOG_BYTES
     content = clients.core.read_namespaced_pod_log(
         name=pod_name,
         namespace=namespace,
         container=container_name,
         previous=previous,
+        tail_lines=LOG_LINES,
+        limit_bytes=LOG_BYTES,
         timestamps=True,
         _preload_content=False,
         _request_timeout=REQUEST_TIMEOUT,
     )
 
-    from backend.app.tools.log_text import read_log_response
-    content = read_log_response(content)
-    truncated = False
+    content, truncated = sample_log_text(read_log_response(content))
 
     return PodLogInfo(
         namespace=namespace,

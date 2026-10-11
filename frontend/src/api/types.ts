@@ -88,6 +88,7 @@ export interface TraceEvent {
 }
 
 export interface EvidenceItem {
+  body_preview?: { truncated: boolean; fields: string[]; scope: string }
   evidence_id: string
   source: string
   resource_type: string

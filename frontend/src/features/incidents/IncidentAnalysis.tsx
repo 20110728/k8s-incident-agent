@@ -4,6 +4,7 @@ import type {
   IncidentStatusResponse,
   RetrievedRunbook,
 } from '../../api'
+import { EvidenceBody } from './EvidenceBody'
 
 import {
   evidenceElementId,
@@ -180,11 +181,15 @@ function DiagnosisPanel({
 }
 
 interface EvidencePanelProps {
+  incidentId: string
+  runId?: string
   evidence: EvidenceItem[]
   referencedIds: readonly string[]
 }
 
 function EvidencePanel({
+  incidentId,
+  runId,
   evidence,
   referencedIds,
 }: EvidencePanelProps) {
@@ -280,18 +285,7 @@ function EvidencePanel({
                   </p>
                 )}
 
-                <details className="structured-data">
-                  <summary>
-                    Inspect structured data
-                  </summary>
-                  <pre>
-                    {JSON.stringify(
-                      item.data,
-                      null,
-                      2,
-                    )}
-                  </pre>
-                </details>
+                <EvidenceBody key={`${runId ?? 'legacy'}:${item.evidence_id}`} item={item} incidentId={incidentId} runId={runId} />
               </article>
             )
           })}
@@ -504,6 +498,8 @@ export function IncidentAnalysis({
       />}
 
       {(section === 'all' || section === 'evidence') && <><EvidencePanel
+        incidentId={incident.incident_id}
+        runId={incident.run?.run_id ?? 'legacy'}
         evidence={incident.evidence}
         referencedIds={diagnosisEvidenceIds}
       />

@@ -1,6 +1,7 @@
 import { ApiClientError } from './errors'
 
 import type {
+  EvidenceItem,
   ErrorResponse,
   HealthResponse,
   IncidentRequest,
@@ -279,6 +280,11 @@ export class ApiClient {
   getRound(id: string, run: string): Promise<{ result: IncidentStatusResponse }> {
     return this.request(`${incidentPath(id)}/runs/${encodeURIComponent(run)}`, { method: 'GET' },
       (v): v is { result: IncidentStatusResponse } => isRecord(v) && isIncidentStatusResponse(v.result))
+  }
+  getEvidence(id: string, evidenceId: string, runId?: string): Promise<{ evidence: EvidenceItem }> {
+    return this.request(`${incidentPath(id)}/evidence/${encodeURIComponent(evidenceId)}${runId ? `?run_id=${encodeURIComponent(runId)}` : ''}`,
+      { method: 'GET' }, (v): v is { evidence: EvidenceItem } =>
+        isRecord(v) && isRecord(v.evidence) && v.evidence.evidence_id === evidenceId && isRecord(v.evidence.data))
   }
   getRunBudget(id: string, run: string): Promise<RunBudget> {
     return this.request(`${incidentPath(id)}/runs/${encodeURIComponent(run)}/budget`, { method: 'GET' },

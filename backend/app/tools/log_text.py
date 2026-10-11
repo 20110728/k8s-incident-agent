@@ -1,5 +1,19 @@
 """Normalize the Kubernetes log response before redaction or persistence."""
 
+LOG_LINES = 1000
+LOG_BYTES = 256 * 1024
+
+
+def sample_log_text(content):
+    """Preserve recent raw lines; also bound a single exceptionally long line."""
+    lines = content.splitlines(keepends=True)
+    sampled = "".join(lines[-LOG_LINES:])
+    encoded = sampled.encode("utf-8")
+    limited = len(lines) >= LOG_LINES or len(encoded) >= LOG_BYTES
+    if len(encoded) > LOG_BYTES:
+        sampled = encoded[-LOG_BYTES:].decode("utf-8", errors="ignore")
+    return sampled, limited
+
 
 def decode_log_content(value):
     if isinstance(value, (bytes, bytearray)):
