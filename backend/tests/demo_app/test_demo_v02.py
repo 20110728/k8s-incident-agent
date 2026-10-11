@@ -16,6 +16,7 @@ from demo_app import VERSION
 from demo_app.inspect import EXPECTED_STATUSES, inspect, matches
 from demo_app.server import Settings, dependency_available, make_server
 from backend.app.agent.remediation_policy import get_allowed_remediation_actions
+from backend.app.agent.schemas import EvidenceItem
 from backend.app.service_profiles.models import ServiceProfile
 from backend.app.service_profiles.registry import make_snapshot
 
@@ -153,9 +154,14 @@ def test_active_profile_matches_manifest_and_application():
                             'readiness_probe': {'path': '/readyz', 'port': 'http', 'scheme': 'HTTP'}}]}
     snapshot = make_snapshot(profile, data)
     assert snapshot['status'] == 'matched'
+    evidence = EvidenceItem(
+        evidence_id='ev-demo-deployment-001', source='test_fixture',
+        resource_type='Deployment', resource_name='order-service',
+        collected_at='2026-01-01T00:00:00+00:00', data=data,
+    ).model_dump()
     state = {'request': {'namespace': 'agent-demo', 'service_name': 'order-service'},
              'service_profile': snapshot, 'diagnosis': {'fault_category': 'readiness_probe_error'},
-             'evidence': [{'resource_type': 'Deployment', 'resource_name': 'order-service', 'data': data}]}
+             'evidence': [evidence]}
     assert get_allowed_remediation_actions(state) == {'manual_investigation'}
 
 
