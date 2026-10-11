@@ -134,8 +134,9 @@ def test_active_profile_matches_manifest_and_application():
     deployments = {d['metadata']['name']: d for d in docs if d['kind'] == 'Deployment'}
     services = {d['metadata']['name']: d for d in docs if d['kind'] == 'Service'}
     assert set(deployments) == set(services) == {'order-service', 'order-dependency'}
-    assert profile.application.version == VERSION and profile.revision == '2'
+    assert profile.application.version == VERSION and profile.revision == '3'
     spec = deployments['order-service']['spec']
+    assert profile.expected_replicas == spec['replicas'] == 2
     container = spec['template']['spec']['containers'][0]
     assert container['imagePullPolicy'] == 'Never'
     assert profile.application.images == {container['name']: container['image']}
