@@ -6,8 +6,12 @@ import { EvidenceBody } from './EvidenceBody'
 describe('saved evidence body', () => {
   it('renders a preview without fetching the full log', () => {
     const fetch = vi.spyOn(apiClient, 'getEvidence')
-    const item = { evidence_id: 'ev-log', data: { content: 'preview-only' },
-      body_preview: { truncated: true, fields: ['content'], scope: 'preview' } } as EvidenceItem
+    const item: EvidenceItem = {
+      evidence_id: 'ev-log', source: 'kubernetes', resource_type: 'PodLogs',
+      resource_name: 'order-pod', collected_at: '2026-10-11T00:00:00Z', error: null,
+      data: { content: 'preview-only' },
+      body_preview: { truncated: true, fields: ['content'], scope: 'preview' },
+    }
     try {
       const html = renderToStaticMarkup(<EvidenceBody item={item} incidentId="incident" runId="run" />)
       expect(html).toContain('preview-only')
