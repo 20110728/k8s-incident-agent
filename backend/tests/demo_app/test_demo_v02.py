@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.request import ProxyHandler, build_opener
 
 import pytest
@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'infra' / 'demo-app'))
 from demo_app import VERSION
 from demo_app.inspect import EXPECTED_STATUSES, inspect, matches
-from demo_app.server import Settings, make_server
+from demo_app.server import Settings, dependency_available, make_server
 from backend.app.agent.remediation_policy import get_allowed_remediation_actions
 from backend.app.service_profiles.models import ServiceProfile
 from backend.app.service_profiles.registry import make_snapshot
@@ -43,7 +43,7 @@ def request(base, path, data=None):
 
 
 @pytest.mark.parametrize('scenario', list(EXPECTED_STATUSES))
-def test_http_scenarios(scenario):
+def test_http_scenarios(scenario, capsys):
     with serving(make_server(Settings('dependency'), '127.0.0.1', 0)) as downstream:
         if scenario == 'dependency_unavailable':
             with serving(make_server(Settings('dependency'), '127.0.0.1', 0)) as stopped:
@@ -60,6 +60,18 @@ def test_http_scenarios(scenario):
         assert not matches(result, 'normal')
     if scenario == 'dependency_unavailable':
         assert result[2]['body']['error'] == 'dependency_unavailable'
+    records = dependency_failures(capsys)
+    if scenario == 'dependency_unavailable':
+        assert {r['purpose'] for r in records} == {'readiness', 'business'}
+        assert all(r['reason'] == 'request_error' and r['http_status'] is None for r in records)
+        assert all(r['target_host'] == '127.0.0.1' for r in records)
+    else:
+        assert records == []
+
+
+def dependency_failures(capsys):
+    records = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    return [r for r in records if r.get('event') == 'dependency_request_failed']
 
 
 def test_independent_dependency_http_service():
@@ -79,14 +91,15 @@ def test_unknown_paths_and_write_methods():
         assert request(base, '/api/orders/demo-001', data=b'{}')[0] == 405
 
 
-@pytest.mark.parametrize('code,body', [
-    (503, b'{"error":"unavailable"}'), (200, b'not-json'), (200, b'[]'),
-    (200, b'{"order_id":"other","available":true}'),
-    (200, b'{"order_id":"demo-001","available":false}'),
-    (200, b'{"order_id":"demo-001","available":1}'),
-    (200, b'x' * 16385), (302, b'{}'),
+@pytest.mark.parametrize('code,body,reason', [
+    (503, b'{"error":"unavailable"}', 'http_status_mismatch'),
+    (200, b'not-json', 'invalid_json'), (200, b'[]', 'response_assertion_failed'),
+    (200, b'{"order_id":"other","available":true}', 'response_assertion_failed'),
+    (200, b'{"order_id":"demo-001","available":false}', 'response_assertion_failed'),
+    (200, b'{"order_id":"demo-001","available":1}', 'response_assertion_failed'),
+    (200, b'x' * 16385, 'response_too_large'), (302, b'{}', 'http_status_mismatch'),
 ])
-def test_bad_dependency_response_fails_readiness_only(code, body):
+def test_bad_dependency_response_fails_readiness_only(code, body, reason, capsys):
     calls = []
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args): pass
@@ -102,6 +115,11 @@ def test_bad_dependency_response_fails_readiness_only(code, body):
             assert request(base, '/readyz')[0] == 503
             assert request(base, '/livez')[0] == 200
     assert calls == ['/api/availability/demo-001']
+    records = dependency_failures(capsys)
+    assert len(records) == 1
+    assert records[0]['reason'] == reason
+    assert records[0]['http_status'] == code
+    assert records[0]['purpose'] == 'readiness'
 
 
 @pytest.mark.parametrize('value', ['typo', '', 'shell'])
@@ -148,7 +166,7 @@ def test_old_policy_fixtures_are_independent_of_current_demo_release():
     assert profile.application.version != VERSION
 
 
-def test_dependency_timeout_returns_503():
+def test_dependency_timeout_returns_503(capsys):
     from threading import Event
     release = Event()
     class Handler(BaseHTTPRequestHandler):
@@ -162,3 +180,40 @@ def test_dependency_timeout_returns_503():
                 assert request(base, '/livez')[0] == 200
         finally:
             release.set()
+    records = dependency_failures(capsys)
+    assert len(records) == 1
+    assert records[0]['reason'] == 'timeout'
+    assert records[0]['http_status'] is None
+
+
+@pytest.mark.parametrize('error,reason,cause_type', [
+    (URLError(ConnectionRefusedError(111, 'private connection details')), 'request_error', 'ConnectionRefusedError'),
+    (URLError(TimeoutError('private timeout details')), 'timeout', 'TimeoutError'),
+    (URLError('private DNS details'), 'request_error', None),
+])
+def test_dependency_failure_logs_observations_without_secrets(monkeypatch, capsys, error, reason, cause_type):
+    from datetime import datetime
+    from unittest.mock import Mock
+    from demo_app import server
+
+    opener = Mock()
+    opener.open.side_effect = error
+    monkeypatch.setattr(server, 'build_opener', lambda *args: opener)
+    settings = Settings('order', dependency_url='http://user:password@example.test/private?token=secret')
+    assert dependency_available(settings, purpose='readiness') is False
+    opener.open.assert_called_once()
+    assert opener.open.call_args.kwargs['timeout'] == settings.dependency_timeout
+    records = dependency_failures(capsys)
+    assert len(records) == 1
+    record = records[0]
+    assert record['target_host'] == 'example.test'
+    assert record['reason'] == reason
+    assert record['exception_type'] == 'URLError'
+    assert record.get('cause_type') == cause_type
+    assert record['http_status'] is None
+    assert datetime.fromisoformat(record['timestamp']).utcoffset().total_seconds() == 0
+    if cause_type == 'ConnectionRefusedError':
+        assert record['errno'] == 111
+    serialized = json.dumps(record)
+    for forbidden in ('password', 'secret', 'private', 'dependency_unavailable', 'replicas', 'fault_mode'):
+        assert forbidden not in serialized
