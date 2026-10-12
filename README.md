@@ -205,4 +205,4 @@ python -m scripts.export_remediation_debug --incident-id YOUR_INCIDENT_ID
 
 可用 `--run-id` 指定历史诊断轮次。恢复导出单独写入 `evals/results/remediation-debug/`，包含保存的计划、审批、实际 patch、执行与复查记录，不重新调用模型或集群。详见 [恢复导出验收](docs/acceptance/remediation-export.md)。
 
-待 readiness 和最后回归确认后固定发布提交、归档演示与未覆盖范围；不填写未经测量的准确率或成本降幅。[收尾材料核对](docs/acceptance/closeout-audit.md) 记录当前入口与历史材料保留原因。
+待 readiness 和最后回归确认后固定发布提交、归档演示与未覆盖范围；不填写未经测量的准确率或成本降幅。
