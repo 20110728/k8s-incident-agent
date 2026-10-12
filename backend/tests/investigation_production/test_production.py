@@ -255,6 +255,22 @@ def test_plan_waits_for_durable_approval_and_writes_at_most_once(system, approve
     system.repo.queue_approval(row["run_id"], decision, approval_binding(saved))  # Idempotent saved approval.
     system.work()
     assert len(system.kube.calls) == int(approved) and len(system.model.prompts) == expected_calls
+    from backend.app.runtime.remediation_export import load_remediation_report
+    with system.storage[0]() as connection:
+        connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        exported = load_remediation_report(connection, row["incident_id"], row["run_id"])
+        assert exported["remediation_plan"] == saved["remediation_plan"]
+        assert exported["saved_approval_payload"]["decision"]["approved"] == approved
+        if approved:
+            assert exported["operation"]["state"] == "succeeded"
+            assert exported["operation"]["request_patch"]
+            assert exported["verification_result"]["status"] == "succeeded"
+        else:
+            assert exported["operation"] is None
+            assert exported["verification_result"] is None
+        with pytest.raises(ValueError, match="INCIDENT_OR_RUN_NOT_FOUND"):
+            load_remediation_report(connection, str(uuid4()), row["run_id"])
+    assert len(system.kube.calls) == int(approved) and len(system.model.prompts) == expected_calls
     if approved:
         assert system.repo.operation(row["run_id"])["state"] == "succeeded"
         if os.environ.get("INCIDENT_AGENT_TEST_AUDIT_DIR"):
