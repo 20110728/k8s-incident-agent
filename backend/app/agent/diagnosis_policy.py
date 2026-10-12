@@ -309,6 +309,42 @@ def validate_diagnosis_assessment(diagnosis: Diagnosis, state: dict) -> None:
             "not HTTP 503 alone. Without supporting evidence choose unknown/insufficient_evidence, "
             "confidence<=0.6, with symptoms, missing evidence and next investigation; do not invent drift.",
         )
+    # Validate configuration support before the exemption for empty follow-up fields.
+    # Otherwise a missing hypothesis citation is hidden by a generic report error.
+    if category in {"service_selector_mismatch", "readiness_probe_error"}:
+        key = CONFIGURATION_DRIFT[category]
+        require(
+            facts[key],
+            "configuration diagnosis requires version-matched registered configuration drift: "
+            f"{category} requires {key}=true, actual={facts[key]}. "
+            "Probe HTTP 503 alone is a symptom, not configuration drift. Reassess using diagnosis_contract; "
+            "if the cause is uncertain, conclude unknown/insufficient_evidence with symptoms and missing evidence.",
+        )
+        require(
+            set(facts["configuration_evidence_ids"]) <= set(diagnosis.evidence_ids),
+            "configuration diagnosis must cite Service and registered Deployment",
+        )
+        # A top-level citation does not bind that evidence to a supported claim.
+        # Surface missing claim references during diagnosis, while its existing
+        # validation retry can still correct them; never attach references here.
+        required_ids = set(facts["configuration_evidence_ids"])
+        missing_by_hypothesis = [
+            {
+                "hypothesis_index": index,
+                "field": f"assessment.root_cause_hypotheses[{index}].evidence_ids",
+                "missing_evidence_ids": sorted(required_ids - set(h.evidence_ids)),
+            }
+            for index, h in enumerate(a.root_cause_hypotheses)
+            if h.status == "supported" and required_ids - set(h.evidence_ids)
+        ]
+        require(
+            not missing_by_hypothesis,
+            "SUPPORTED_CONFIGURATION_REFERENCES_INCOMPLETE: each supported configuration "
+            "hypothesis must itself cite Service and registered Deployment evidence; "
+            f"missing={missing_by_hypothesis!r}. Reassess the evidence: cite it only if it "
+            "supports this claim; otherwise keep the hypothesis suspected and state "
+            "the genuine missing evidence. Top-level evidence_ids alone are insufficient.",
+        )
     if category == "no_fault_detected":
         require(
             facts["resource_status"] == "ready"
@@ -355,39 +391,6 @@ def validate_diagnosis_assessment(diagnosis: Diagnosis, state: dict) -> None:
 
     if category == "unknown":
         require(diagnosis.confidence <= 0.6, "unknown confidence must be <= 0.6")
-    if category in {"service_selector_mismatch", "readiness_probe_error"}:
-        key = CONFIGURATION_DRIFT[category]
-        require(
-            facts[key],
-            "configuration diagnosis requires version-matched registered configuration drift: "
-            f"{category} requires {key}=true, actual={facts[key]}. "
-            "Probe HTTP 503 alone is a symptom, not configuration drift. Reassess using diagnosis_contract; "
-            "if the cause is uncertain, conclude unknown/insufficient_evidence with symptoms and missing evidence.",
-        )
-        require(
-            set(facts["configuration_evidence_ids"]) <= set(diagnosis.evidence_ids),
-            "configuration diagnosis must cite Service and registered Deployment",
-        )
-        # A top-level citation does not bind that evidence to a supported claim.
-        # Surface missing claim references during diagnosis, while its existing
-        # validation retry can still correct them; never attach references here.
-        required_ids = set(facts["configuration_evidence_ids"])
-        missing_by_hypothesis = [
-            {
-                "hypothesis_index": index,
-                "missing_evidence_ids": sorted(required_ids - set(h.evidence_ids)),
-            }
-            for index, h in enumerate(a.root_cause_hypotheses)
-            if h.status == "supported" and required_ids - set(h.evidence_ids)
-        ]
-        require(
-            not missing_by_hypothesis,
-            "SUPPORTED_CONFIGURATION_REFERENCES_INCOMPLETE: each supported configuration "
-            "hypothesis must itself cite Service and registered Deployment evidence; "
-            f"missing={missing_by_hypothesis!r}. Reassess the evidence: cite it only if it "
-            "supports this claim; otherwise keep the hypothesis suspected and state "
-            "the genuine missing evidence. Top-level evidence_ids alone are insufficient.",
-        )
     if category == "application_error":
         supported = facts["business_status"] == "failed" or bool(
             facts["current_runtime_faults"]

@@ -209,27 +209,42 @@ def test_api_question_answer_replay_and_worker_resume(system):
 
 
 @pytest.mark.parametrize("approved", [True, False])
-@pytest.mark.parametrize("omitted_reference", [False, True])
-def test_plan_waits_for_durable_approval_and_writes_at_most_once(system, approved, omitted_reference):
+@pytest.mark.parametrize("reference_case", ["complete", "index", "claim"])
+def test_plan_waits_for_durable_approval_and_writes_at_most_once(system, approved, reference_case):
     setup_drift(system)
-    if omitted_reference:
+    expected_calls = 2 if reference_case == "claim" else 1
+    if reference_case == "index":
         raw = system.model.choose(None)
         pod_id = system.state["evidence"][3]["evidence_id"]
         raw["diagnosis"]["evidence_ids"].remove(pod_id)
         raw["diagnosis"]["reasoning_summary"] += f" Observed Pod: {pod_id}."
         raw["diagnosis"]["assessment"].update(missing_evidence=[], next_investigation=[])
         system.model.choose = lambda _: deepcopy(raw)
+    elif reference_case == "claim":
+        raw = deepcopy(system.model.choose(None))
+        raw["diagnosis"]["assessment"].update(missing_evidence=[], next_investigation=[])
+        deployment_id = system.state["evidence"][1]["evidence_id"]
+        def choose(prompt):
+            result = deepcopy(raw)
+            if not prompt.get("feedback"):
+                result["diagnosis"]["assessment"]["root_cause_hypotheses"][0]["evidence_ids"].remove(deployment_id)
+            else:
+                assert "SUPPORTED_CONFIGURATION_REFERENCES_INCOMPLETE" in prompt["feedback"]
+                assert "assessment.root_cause_hypotheses[0].evidence_ids" in prompt["feedback"]
+                assert deployment_id in prompt["feedback"]
+            return result
+        system.model.choose = choose
     row = system.create()
     system.work()
     waiting = system.repo.latest(row["incident_id"])
     assert waiting["status"] == "waiting_approval"
     saved = snapshot(system, row)
-    if omitted_reference:
+    if reference_case == "index":
         assert pod_id in saved["diagnosis"]["evidence_ids"]
         assert pod_id not in saved["diagnosis_model_output"]["evidence_ids"]
         assert saved["output"]["reference_normalization"]["added_evidence_ids"] == [pod_id]
     assert saved["remediation_plan"]["target_uid"] == "service-uid"
-    assert system.kube.calls == [] and len(system.model.prompts) == 1
+    assert system.kube.calls == [] and len(system.model.prompts) == expected_calls
     decision = approve(system, row, saved, approved, via_api=True)
     system.work()
     final = system.repo.latest(row["incident_id"])
@@ -239,7 +254,7 @@ def test_plan_waits_for_durable_approval_and_writes_at_most_once(system, approve
     assert system.verifier.verify.call_count == int(approved)
     system.repo.queue_approval(row["run_id"], decision, approval_binding(saved))  # Idempotent saved approval.
     system.work()
-    assert len(system.kube.calls) == int(approved) and len(system.model.prompts) == 1
+    assert len(system.kube.calls) == int(approved) and len(system.model.prompts) == expected_calls
     if approved:
         assert system.repo.operation(row["run_id"])["state"] == "succeeded"
         if os.environ.get("INCIDENT_AGENT_TEST_AUDIT_DIR"):
@@ -250,6 +265,28 @@ def test_plan_waits_for_durable_approval_and_writes_at_most_once(system, approve
                     "approval": decision, "terminal_phase": final["output_snapshot"]["phase"],
                     "model_calls": len(system.model.prompts), "writes": len(system.kube.calls),
                     "verification_calls": system.verifier.verify.call_count}, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def test_filling_follow_up_without_fixing_claim_still_hands_off(system):
+    setup_drift(system)
+    raw = deepcopy(system.model.choose(None))
+    raw["diagnosis"]["assessment"]["root_cause_hypotheses"][0]["evidence_ids"].remove(
+        system.state["evidence"][1]["evidence_id"])
+    def choose(prompt):
+        result = deepcopy(raw)
+        if not prompt.get("feedback"):
+            result["diagnosis"]["assessment"].update(missing_evidence=[], next_investigation=[])
+        else:
+            assert "SUPPORTED_CONFIGURATION_REFERENCES_INCOMPLETE" in prompt["feedback"]
+        return result
+    system.model.choose = choose
+    row = system.create()
+    system.work()
+    saved = snapshot(system, row)
+    assert saved["output"]["status"] == "handoff"
+    assert saved["output"]["stop_reason"] == "DECISION_VALIDATION_FAILED"
+    assert not saved.get("requires_approval") and not saved.get("remediation_plan")
+    assert len(system.model.prompts) == 2 and system.kube.calls == []
 
 
 def test_supplement_invalidates_old_approval_before_any_write(system):

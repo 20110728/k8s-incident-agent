@@ -11,6 +11,10 @@
 
 ## ECS 验收
 
+后续修复（同日）：第二个真实事件的顶层引用已完整，但 supported 假设缺 Deployment，且调查字段为空。调整 `diagnosis_policy.py` 的检查顺序：配置漂移与假设引用先于调查字段豁免，返回 `SUPPORTED_CONFIGURATION_REFERENCES_INCOMPLETE`、具体字段路径与缺失编号。准入条件不变，不自动补充假设依据。
+
+新增回归覆盖 selector/readiness、调查字段空/非空、有效纠正后审批与幂等，以及仅填调查建议仍交接、suspected/虚构引用/无漂移/业务失败不得写入。ECS 真实模型若首次遗漏，应在纠正输入中收到具体缺项；只有模型形成合格诊断才进入审批。两次仍不合格时继续保守交接。
+
 ```bash
 cd ~/projects/k8s-incident-agent
 git pull --ff-only origin feature/baseline-contracts
