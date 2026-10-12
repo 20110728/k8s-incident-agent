@@ -21,7 +21,7 @@ class ApiSettings(BaseSettings):
     )
 
     app_name: str = "Kubernetes Incident Agent API"
-    app_version: str = "0.1.0"
+    app_version: str = "0.2.0"
     environment: Literal[
         "development",
         "test",
