@@ -209,13 +209,25 @@ def test_api_question_answer_replay_and_worker_resume(system):
 
 
 @pytest.mark.parametrize("approved", [True, False])
-def test_plan_waits_for_durable_approval_and_writes_at_most_once(system, approved):
+@pytest.mark.parametrize("omitted_reference", [False, True])
+def test_plan_waits_for_durable_approval_and_writes_at_most_once(system, approved, omitted_reference):
     setup_drift(system)
+    if omitted_reference:
+        raw = system.model.choose(None)
+        pod_id = system.state["evidence"][3]["evidence_id"]
+        raw["diagnosis"]["evidence_ids"].remove(pod_id)
+        raw["diagnosis"]["reasoning_summary"] += f" Observed Pod: {pod_id}."
+        raw["diagnosis"]["assessment"].update(missing_evidence=[], next_investigation=[])
+        system.model.choose = lambda _: deepcopy(raw)
     row = system.create()
     system.work()
     waiting = system.repo.latest(row["incident_id"])
     assert waiting["status"] == "waiting_approval"
     saved = snapshot(system, row)
+    if omitted_reference:
+        assert pod_id in saved["diagnosis"]["evidence_ids"]
+        assert pod_id not in saved["diagnosis_model_output"]["evidence_ids"]
+        assert saved["output"]["reference_normalization"]["added_evidence_ids"] == [pod_id]
     assert saved["remediation_plan"]["target_uid"] == "service-uid"
     assert system.kube.calls == [] and len(system.model.prompts) == 1
     decision = approve(system, row, saved, approved, via_api=True)

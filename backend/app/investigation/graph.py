@@ -7,7 +7,7 @@ from langgraph.types import interrupt
 from pydantic import ValidationError
 
 from backend.app.agent.diagnosis_policy import diagnostic_facts, validate_diagnosis_assessment, InvalidDiagnosisAssessment
-from backend.app.agent.nodes import validate_diagnosis_references, InvalidDiagnosisReference
+from backend.app.agent.nodes import validate_diagnosis_references, InvalidDiagnosisReference, reconcile_declared_evidence
 from backend.app.agent.remediation_policy import get_allowed_remediation_actions
 from backend.app.investigation.context import build_context, CALL_TOKENS, CALL_SECONDS, ContextAssemblyError
 from backend.app.investigation.contracts import Decision
@@ -53,7 +53,7 @@ class DiagnosisAssessmentRejected(ValueError):
     """A parsed diagnosis with valid references failed semantic assessment only."""
 
 
-def validate_decision(value, prompt, current, toolbox, terminal):
+def validate_decision(value, prompt, current, toolbox, terminal, *, normalization=None):
     raw = value.get("decision") if isinstance(value, dict) else None
     if isinstance(raw, dict) and raw.get("action") == "collect" and isinstance(raw.get("requests"), list):
         visible = {r["resource_ref"] for r in prompt["resources"]}
@@ -85,6 +85,14 @@ def validate_decision(value, prompt, current, toolbox, terminal):
         for claim in [*diagnosis.assessment.symptoms, *diagnosis.assessment.root_cause_hypotheses]:
             if not set(claim.evidence_ids) <= allowed:
                 raise ValueError("CLAIM_REFERENCES_NOT_IN_CONTEXT")
+        # Index only exact references already written by the model and visible in
+        # this call. Never add evidence to hypotheses or infer missing support.
+        diagnosis, added = reconcile_declared_evidence(diagnosis, {
+            **current, "evidence": [e for e in current["evidence"] if e["evidence_id"] in allowed],
+        })
+        decision = decision.model_copy(update={"diagnosis": diagnosis})
+        if normalization is not None and added:
+            normalization.update(kind="declared_evidence_index", added_evidence_ids=added)
         errors = []
         reference_error = False
         for validator in (lambda: validate_diagnosis_references(diagnosis=diagnosis, state=current),
@@ -167,13 +175,15 @@ def build_investigation_graph(budget, toolbox, model, *, checkpointer=None, inte
                 if response.get("error"):
                     return {"phase": "finished", "output": handoff(state, response["error"])}
                 try:
+                    normalization = {}
                     if response.get("parse_error"):
                         diagnostics = response.get("diagnostics") or {}
                         if diagnostics.get("tool_boundary_invalid"):
                             raise ToolBoundaryError("TOOL_OR_RESOURCE_SCHEMA_NOT_ALLOWED")
                         detail = diagnostics.get("parser_detail")
                         raise ValueError(response["parse_error"] + (": " + detail if detail else ""))
-                    decision = validate_decision(response.get("parsed"), prompt, current, toolbox, terminal)
+                    decision = validate_decision(response.get("parsed"), prompt, current, toolbox, terminal,
+                                                 normalization=normalization)
                     if interactive and decision["action"] == "collect" and not decision.get("resample_reason"):
                         # Reject an unjustified repeat while the shared correction
                         # slot is still available, before scheduling any reads.
@@ -216,6 +226,10 @@ def build_investigation_graph(budget, toolbox, model, *, checkpointer=None, inte
                                                                   "validation_failures": failures}}
                     if safe_diagnosis:
                         terminal = True  # Repair the report only; do not reopen collection.
+            if normalization:
+                with budget.edit() as data:
+                    ticket = data["requests"][attempt_id]
+                    data["calls"][ticket].setdefault("reference_normalization", deepcopy(normalization))
             record = {"step": step, "action": decision["action"], "reason": decision.get("reason"),
                       "missing_fact": decision.get("missing_fact"), "evidence_ids": decision.get("evidence_ids", [])}
             if decision["action"] == "collect":
@@ -227,6 +241,9 @@ def build_investigation_graph(budget, toolbox, model, *, checkpointer=None, inte
                         "question": question, "asked_slots": [*state.get("asked_slots", []), decision["slot"]],
                         **({"clarification_round": question["version"]} if production else {})}
             output = {"status": decision["action"], "decision": decision, "cluster_writes_executed": False}
+            if normalization:
+                output.update(reference_normalization=deepcopy(normalization),
+                              diagnosis_model_output=deepcopy(response["parsed"]["decision"]["diagnosis"]))
             if decision["action"] in {"ask_user", "propose_plan"} and not production:
                 output.update(status="handoff", stop_reason="READONLY_STAGE_REQUIRES_6B2")
             return {"step": step, "decision": decision, "history": [*state["history"], record], "phase": "finished", "output": output}
@@ -303,7 +320,8 @@ def build_investigation_graph(budget, toolbox, model, *, checkpointer=None, inte
         decision = output.get("decision") or {}
         diagnosis = decision.get("diagnosis") or unknown_diagnosis(current, output)
         update = {**current, "diagnosis": diagnosis, "diagnosis_model_output":
-                  None if output.get("diagnosis_source") == "program_evidence_only" else decision.get("diagnosis")}
+                  None if output.get("diagnosis_source") == "program_evidence_only" else
+                  output.get("diagnosis_model_output", decision.get("diagnosis"))}
         if output["status"] == "propose_plan":
             try:
                 plan = deterministic_plan({**current, "diagnosis": diagnosis}, decision["candidate"])

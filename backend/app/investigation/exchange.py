@@ -55,5 +55,6 @@ def last_exchange_report(row, data):
         "output": result.get("final_output"), "parsed_output": result.get("parsed"),
         "parse_error": result.get("parse_error"), "error": result.get("error"),
         "diagnostics": result.get("diagnostics"), "usage": call.get("usage"), "validation": call.get("validation"),
+        "reference_normalization": call.get("reference_normalization"),
         "note": "Missing input/output was not captured or received; it is not reconstructed. Saved input alone does not prove provider receipt.",
     }))

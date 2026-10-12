@@ -51,6 +51,7 @@ def brief_debug_report(row, data):
             "error_message": provider.get("error_message"),
             "validation": safe_text(validation.get("detail"), 400) if validation else None,
             "validation_stage": validation.get("stage"),
+            "reference_normalization": call.get("reference_normalization"),
             "finish_reason": provider.get("finish_reason"),
             "parser_detail": safe_text(provider.get("parser_detail"), 400) if provider.get("parser_detail") else None,
             "selected_count": len(meta.get("selection") or []),

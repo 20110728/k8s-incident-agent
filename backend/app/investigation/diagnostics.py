@@ -76,6 +76,7 @@ def debug_report(row, data):
         calls.append({"request_id": call.get("request_id"), "status": call["status"],
             "metadata": call.get("metadata"), "usage": call.get("usage"), "elapsed_seconds": call.get("elapsed_seconds"),
             "validation": call.get("validation"), "validation_context": call.get("validation_context"),
+            "reference_normalization": call.get("reference_normalization"),
             "result": {k: result[k] for k in ("parsed", "parse_error", "error", "diagnostics") if k in result}})
     report = {"report_version": 1, "source": "saved_records_only_no_model_or_tool_execution",
         "run": {k: row.get(k) for k in ("incident_id", "run_id", "workflow_version", "status", "created_at", "updated_at")},
