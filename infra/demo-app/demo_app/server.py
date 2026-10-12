@@ -6,9 +6,11 @@ import argparse
 import json
 import os
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from http.client import HTTPException
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 from demo_app import VERSION
@@ -40,24 +42,53 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
-def dependency_available(settings: Settings) -> bool:
+def dependency_available(settings: Settings, *, purpose: str = "unspecified") -> bool:
     # No retries, no redirect following, bounded body. Ignore ambient HTTP proxies.
     opener = build_opener(ProxyHandler({}), NoRedirect())
     request = Request(settings.dependency_url.rstrip("/") + DEPENDENCY_PATH,
                       headers={"Accept": "application/json"}, method="GET")
+    def failed(reason, *, status=None, error=None):
+        # Record observations, never scenario labels, response bodies or exception
+        # messages (which can contain credentials/URLs). No additional request.
+        target = urlsplit(request.full_url)
+        cause = error.reason if isinstance(error, URLError) else error
+        record = {
+            "timestamp": datetime.now(UTC).isoformat(),
+            "service": settings.role, "event": "dependency_request_failed",
+            "purpose": purpose, "target_host": target.hostname,
+            "operation_path": DEPENDENCY_PATH, "reason": reason,
+            "http_status": status,
+        }
+        if error is not None:
+            record["exception_type"] = type(error).__name__
+            if isinstance(cause, BaseException):
+                record["cause_type"] = type(cause).__name__
+                if isinstance(cause, OSError) and type(cause.errno) is int:
+                    record["errno"] = cause.errno
+        print(json.dumps(record), flush=True)
+        return False
+
     try:
         with opener.open(request, timeout=settings.dependency_timeout) as response:
             body = response.read(MAX_DEPENDENCY_BYTES + 1)
-            if response.status != 200 or len(body) > MAX_DEPENDENCY_BYTES:
-                return False
-            data = json.loads(body)
-            return (isinstance(data, dict) and data.get("order_id") == "demo-001"
-                    and data.get("available") is True)
+            if response.status != 200:
+                return failed("http_status_mismatch", status=response.status)
+            if len(body) > MAX_DEPENDENCY_BYTES:
+                return failed("response_too_large", status=response.status)
+            try:
+                data = json.loads(body)
+            except (ValueError, UnicodeError) as error:
+                return failed("invalid_json", status=response.status, error=error)
+            if not (isinstance(data, dict) and data.get("order_id") == "demo-001"
+                    and data.get("available") is True):
+                return failed("response_assertion_failed", status=response.status)
+            return True
     except HTTPError as error:
         error.close()
-        return False
-    except (URLError, TimeoutError, OSError, ValueError, HTTPException):
-        return False
+        return failed("http_status_mismatch", status=error.code, error=error)
+    except (URLError, TimeoutError, OSError, ValueError, HTTPException) as error:
+        cause = error.reason if isinstance(error, URLError) else error
+        return failed("timeout" if isinstance(cause, TimeoutError) else "request_error", error=error)
 
 
 def response_for(settings: Settings, path: str) -> tuple[int, dict]:
@@ -73,7 +104,7 @@ def response_for(settings: Settings, path: str) -> tuple[int, dict]:
         return 404, {**identity, "error": "not_found"}
     if path not in {"/readyz", ORDER_PATH}:
         return 404, {**identity, "error": "not_found"}
-    if not dependency_available(settings):
+    if not dependency_available(settings, purpose="readiness" if path == "/readyz" else "business"):
         return 503, {**identity, "error": "dependency_unavailable"}
     if path == "/readyz":
         return 200, {**identity, "status": "ready"}

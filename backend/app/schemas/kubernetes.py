@@ -11,6 +11,8 @@ class ServicePortInfo(BaseModel):
 
 
 class ServiceInfo(BaseModel):
+    uid: str | None = None
+    resource_version: str | None = None
     namespace: str
     name: str
     service_type: str
@@ -20,6 +22,8 @@ class ServiceInfo(BaseModel):
 
 
 class EndpointInfo(BaseModel):
+    target_uid: str | None = None
+    target_namespace: str | None = None
     addresses: list[str] = Field(default_factory=list)
     ready: bool | None = None
     serving: bool | None = None
@@ -30,6 +34,9 @@ class EndpointInfo(BaseModel):
 
 
 class EndpointSliceInfo(BaseModel):
+    uid: str | None = None
+    resource_version: str | None = None
+    service_uid: str | None = None
     namespace: str
     name: str
     service_name: str
@@ -52,6 +59,8 @@ class ContainerStatusInfo(BaseModel):
 
 
 class PodInfo(BaseModel):
+    uid: str | None = None
+    resource_version: str | None = None
     namespace: str
     name: str
     phase: str
@@ -123,6 +132,10 @@ class DeploymentInfo(BaseModel):
 
 
 class OwnerChainInfo(BaseModel):
+    pod_uid: str | None = None
+    direct_owner_uid: str | None = None
+    replica_set_uid: str | None = None
+    deployment_uid: str | None = None
     namespace: str
     pod_name: str
     direct_owner_kind: str | None = None

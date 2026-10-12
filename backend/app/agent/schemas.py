@@ -62,8 +62,8 @@ class EvidenceItem(BaseModel):
 
 class DiagnosticFinding(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    summary: str = Field(min_length=1, max_length=1200)
-    evidence_ids: list[str] = Field(min_length=1, max_length=20)
+    summary: str = Field(min_length=1)
+    evidence_ids: list[str] = Field(min_length=1)
 
 
 class RootCauseHypothesis(DiagnosticFinding):
@@ -77,13 +77,13 @@ class DiagnosticAssessment(BaseModel):
         "deployment_configuration", "application_runtime", "dependency",
         "insufficient_evidence", "none",
     ]
-    symptoms: list[DiagnosticFinding] = Field(max_length=10)
-    root_cause_hypotheses: list[RootCauseHypothesis] = Field(max_length=5)
-    missing_evidence: list[str] = Field(max_length=10)
-    next_investigation: list[str] = Field(max_length=5)
+    symptoms: list[DiagnosticFinding] = Field()
+    root_cause_hypotheses: list[RootCauseHypothesis] = Field()
+    missing_evidence: list[str] = Field()
+    next_investigation: list[str] = Field()
     resource_status: Literal["ready", "not_ready", "unknown"]
     business_status: Literal["passed", "failed", "unknown"]
-    unverified_scope: list[str] = Field(min_length=1, max_length=10)
+    unverified_scope: list[str] = Field(min_length=1)
 
 
 class Diagnosis(BaseModel):
@@ -192,6 +192,9 @@ class RemediationParameters(BaseModel):
 class RemediationPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    # Filled from observed evidence by the server, never trusted from the model.
+    target_uid: str | None = Field(default=None, min_length=1, max_length=128)
+
     action: RemediationActionName
     parameters: RemediationParameters
 
@@ -235,6 +238,8 @@ class ApprovalRequest(BaseModel):
     )
     incident_id: str = Field(min_length=1)
     plan: RemediationPlan
+    plan_revision: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    approval_revision: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
 class ApprovalDecision(BaseModel):
@@ -273,6 +278,8 @@ class ApprovalRecord(BaseModel):
     approver: str = Field(min_length=1, max_length=100)
     comment: str = Field(default="", max_length=1000)
     decided_at: str = Field(min_length=1)
+    plan_revision: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    approval_revision: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 ExecutionStatus = Literal[
     "succeeded",
@@ -286,6 +293,8 @@ class ResourceSnapshot(BaseModel):
     """Minimal non-secret configuration snapshot."""
 
     model_config = ConfigDict(extra="forbid")
+    uid: str | None = None
+    generation: int | None = None
 
     namespace: str = Field(
         min_length=1,
@@ -392,6 +401,7 @@ class VerificationCheck(BaseModel):
 
 class RecoveryVerificationResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    observation: dict[str, Any] | None = None
 
     # 旧检查点缺少这些字段时保持 resource_only，不追认业务恢复。
     verification_scope: Literal['resource_only', 'resources_and_registered_business'] = 'resource_only'

@@ -88,6 +88,7 @@ export interface TraceEvent {
 }
 
 export interface EvidenceItem {
+  body_preview?: { truncated: boolean; fields: string[]; scope: string }
   evidence_id: string
   source: string
   resource_type: string
@@ -225,6 +226,7 @@ export interface RecoveryVerificationResult {
   resource_verification_status?: VerificationStatus | null
   resource_status?: 'ready' | 'not_ready' | 'unknown'
   business_status?: 'passed' | 'failed' | 'unknown' | 'skipped'
+  observation?: ObservationSummary | null
   unverified_scope?: string[]
   post_repair_evidence?: EvidenceItem[]
 
@@ -256,6 +258,10 @@ export interface IncidentError {
 }
 
 export interface IncidentStatusResponse {
+  investigation?: InvestigationView | null
+  execution_mode?: 'sync' | 'queued'
+  worker_available?: boolean
+  run?: RunSummary | null
   llm_debug?: JsonObject
   incident_id: string
   thread_id: string
@@ -314,4 +320,157 @@ export interface HealthResponse {
 export interface ReadinessResponse {
   status: 'ready'
   checks: Record<string, boolean>
+}
+
+export interface Question {
+  change_candidates?: { resource_ref: string; kind: string; name: string; container?: string | null }[]
+  question_id: string
+  version: number
+  questions: { slot: string; text: string }[]
+  reason: string
+  evidence_revision: string
+}
+
+export interface RunSummary {
+  run_id: string
+  status: string
+  run_kind: string
+  created_at: string
+  updated_at: string
+  finished_at: string | null
+  attempt: number
+  last_error_code: string | null
+  stop_requested?: boolean
+  invalidated_at?: string | null
+  question?: Question | null
+  adopted_message_ids?: string[]
+}
+
+export interface IncidentListItem {
+  incident_id: string
+  namespace: string
+  service_name: string
+  phase: string
+  created_at: string
+  updated_at: string
+  run: RunSummary | null
+}
+
+export interface CursorPage<T> { items: T[]; next_cursor: string | null }
+export interface SequencePage<T> { items: T[]; next_before_sequence: number | null }
+export interface Message {
+  message_id: string
+  sequence: number
+  role: string
+  source: string
+  content: string
+  created_at: string
+  related_run_id: string | null
+  evidence_refs: string[]
+  adopted_by_run_ids: string[]
+}
+export type InteractionIntent = 'auto' | 'explain' | 'compare' | 'supplement' | 'investigate' | 'recheck' | 'observe' | 'stop'
+export interface InteractionRequest {
+  client_message_id: string
+  content: string
+  intent: InteractionIntent
+  reference_run_id?: string
+  compare_run_id?: string
+}
+export interface AnswerRequest {
+  changed_resource_refs?: string[]
+  client_message_id: string
+  content: string
+  question_id: string
+  version: number
+  answers: Record<string, string>
+  skip: boolean
+}
+export interface InteractionResult {
+  run: RunSummary
+  output: {
+    intent?: string
+    answer?: string
+    reason?: string
+    unknowns?: string[]
+    diagnosis_run_id?: string
+    historical_only?: boolean
+    reference_snapshots?: { run_id: string | null; snapshot_at: string }[]
+    citations?: { citation_id: string; run_id: string | null; collected_at: string | null; snapshot_at: string }[]
+  } | null
+  calls: { purpose?: string; model?: string; elapsed_ms?: number; status?: string; usage?: Record<string, number> }[]
+}
+export interface ControlReceipt {
+  control_id: string
+  status: string
+  action?: string
+  message_id: string
+  diagnosis_run_id?: string
+  deferred_until_write_checked?: boolean
+  processing?: string
+}
+export type CommandReceipt = InteractionResult | ControlReceipt
+export interface ObservationSummary {
+  status: string
+  consecutive: number
+  policy: { version: string; required_consecutive: number }
+  samples: { sequence: number; status: string; resource_status?: string; business_status?: string; started_at: string; finished_at: string | null }[]
+}
+
+export interface Recheck {
+  observation?: ObservationSummary | null
+  recheck_id: string
+  started_at: string
+  finished_at: string
+  note: string
+  status: string
+  resource_status: string
+  business_status: string
+  target_comparison: { status: string; changes: JsonObject }
+  unverified_scope: string[]
+  error_code: string | null
+  collection_errors: JsonObject[]
+}
+
+export interface DelayedRecheck {
+  delayed_id: string
+  sequence: number
+  status: 'pending' | 'running' | 'passed' | 'relapsed' | 'unknown' | 'invalidated' | 'expired'
+  due_at: string
+  expires_at: string
+  finished_at: string | null
+  reason: string | null
+  initial_result: { status: string; finished_at: string; consecutive: number }
+  result: Recheck | null
+}
+export interface Operation {
+  operation_id: string
+  run_id: string
+  state: string
+  error_code: string | null
+}
+export interface RunBudget {
+  accounting?: { reported_charge: number; estimated_or_reserved_charge: number; embedding_charge: number; remaining: number | null }
+  generation?: { attempts: number; reported_tokens: number; unreported_attempts: number }
+  available: boolean
+  run_id: string
+  policy?: { active_seconds: number | null; extra_seconds: number | null; total_tokens: number | null; decisions: number; tools: number | null }
+  used?: { active_seconds: number; extra_seconds: number; tokens: number; decisions: number; tools: number }
+  exhausted?: string | null
+  calls?: unknown[]
+  handoff?: { reason: string; known: string; unknown: string; next_step: string } | null
+}
+
+export interface InvestigationView {
+  validation_failures?: { attempt: number; stage: string; action: string | null; detail: string }[]
+  version: number
+  steps: { step: number; action: string; reason: string | null; missing_fact: string | null; evidence_ids: string[];
+    results: { tool: string; coverage: string; error_code: string | null; evidence_ids: string[]; generation: number }[] }[]
+  observations: { evidence_id: string; origin: string; resource_type: string; resource_name: string;
+    collected_at: string | null; coverage: string; error: string | null; truncated: boolean; current: boolean }[]
+  omitted_observations: number
+  outcome: string | null
+  stop_reason: string | null
+  question_count: number
+  answer_count: number
 }

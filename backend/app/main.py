@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from functools import partial
 from contextlib import (
     AbstractContextManager,
     asynccontextmanager,
 )
 
 from fastapi import FastAPI
+from backend.app.runtime.failpoints import get_failpoints
 
 from backend.app.persistence.serialization_security import (
     STRICT_MSGPACK_ENABLED,
@@ -22,6 +24,10 @@ from backend.app.api.routes.system import (
     router as system_router,
 )
 from backend.app.api.routes.rechecks import router as recheck_router
+from backend.app.api.routes.messages import router as message_router
+from backend.app.api.routes.rounds import router as round_router
+from backend.app.api.routes.interactions import router as interaction_router
+from backend.app.api.routes.controls import router as control_router
 from backend.app.config import ApiSettings, get_api_settings
 from backend.app.services.incident_service import (
     IncidentApplicationService,
@@ -43,6 +49,9 @@ def create_app(
     ) = None,
 ) -> FastAPI:
     resolved_settings = settings or get_api_settings()
+    failure = get_failpoints()
+    if failure.settings.failpoint and resolved_settings.environment != "test":
+        raise ValueError("failpoints are forbidden outside test API configuration")
 
     docs_url = (
         "/docs"
@@ -71,7 +80,7 @@ def create_app(
 
         factory = (
             service_context_factory
-            or incident_service_context
+            or partial(incident_service_context, execution_mode=resolved_settings.execution_mode)
         )
         application.state.ready = False
 
@@ -119,6 +128,7 @@ def create_app(
             allow_headers=[
                 "Accept",
                 "Content-Type",
+                "Idempotency-Key",
             ],
             max_age=600,
         )
@@ -130,6 +140,10 @@ def create_app(
         prefix=resolved_settings.api_prefix,
     )
     app.include_router(recheck_router, prefix=resolved_settings.api_prefix)
+    app.include_router(message_router, prefix=resolved_settings.api_prefix)
+    app.include_router(round_router, prefix=resolved_settings.api_prefix)
+    app.include_router(interaction_router, prefix=resolved_settings.api_prefix)
+    app.include_router(control_router, prefix=resolved_settings.api_prefix)
 
     return app
 

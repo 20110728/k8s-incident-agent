@@ -1,0 +1,22 @@
+{
+  "scope": "future_runner_contract_not_current_application_enforcement",
+  "real_model_enabled": false,
+  "max_cost_usd": 0,
+  "pilot_cases": [
+    "C01",
+    "C02",
+    "C06",
+    "C10"
+  ],
+  "pilot_max_runs_per_configuration": 4,
+  "holdout_max_runs_per_configuration": 72,
+  "per_run": {
+    "wall_seconds": 180,
+    "readonly_tool_calls": 12,
+    "investigation_rounds": 3,
+    "physical_model_requests_including_retries": 6,
+    "total_tokens": 24000
+  },
+  "unknown_cost": "stop_before_paid_call",
+  "unknown_usage": "record_unknown_not_zero"
+}

@@ -3,6 +3,7 @@ name: k8s-incident-agent
 services:
   postgres:
     image: pgvector/pgvector:0.8.6-pg16-bookworm
+    shm_size: 256m
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
@@ -84,6 +85,38 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    stop_grace_period: 30s
+
+  worker:
+    profiles: [worker]
+    image: k8s-incident-agent-backend:day21
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    network_mode: host
+    restart: unless-stopped
+    init: true
+    user: "${LOCAL_UID:?Set LOCAL_UID}:${LOCAL_GID:?Set LOCAL_GID}"
+    env_file: [.env]
+    command: [python, -m, backend.app.runtime.worker]
+    environment:
+      LANGGRAPH_STRICT_MSGPACK: "true"
+      KUBERNETES_CONTEXT: ${KUBERNETES_CONTEXT:-kind-incident-agent}
+      KUBECONFIG: /tmp/kubeconfig
+      TMPDIR: /tmp
+      XDG_CACHE_HOME: /tmp/.cache
+      INCIDENT_AGENT_SERVICE_PROFILE_DIR: /app/config/service-profiles
+    volumes:
+      - ./backend:/app/backend:ro
+      - ./config/service-profiles:/app/config/service-profiles:ro
+      - ${KUBECONFIG_PATH:?Set KUBECONFIG_PATH}:/tmp/kubeconfig:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
     stop_grace_period: 30s
 
   frontend:

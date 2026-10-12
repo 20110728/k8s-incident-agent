@@ -191,6 +191,7 @@ def build_incident_graph(
     ) = None,
     *,
     checkpointer=None,
+    dialogue=False,
 ):
     if (
         diagnoser is not None
@@ -348,16 +349,19 @@ def build_incident_graph(
         request_human_approval,
     )
 
-    builder.add_conditional_edges(
-        "diagnose_incident",
-        route_after_diagnosis,
-        {
-            "plan": "plan_remediation",
-            "skip": "skip_remediation",
-            "stop": END,
-        },
-    )
-
+    if dialogue:
+        from backend.app.agent.clarification import wire_clarification
+        wire_clarification(builder, route_after_diagnosis)
+    else:
+        builder.add_conditional_edges(
+            "diagnose_incident",
+            route_after_diagnosis,
+            {
+                "plan": "plan_remediation",
+                "skip": "skip_remediation",
+                "stop": END,
+            },
+        )
     builder.add_edge(
         "skip_remediation",
         END,

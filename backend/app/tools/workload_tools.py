@@ -57,6 +57,7 @@ def resolve_pod_owner(
     direct_owner = _get_controller_owner(pod.metadata.owner_references)
 
     result = OwnerChainInfo(
+        pod_uid=getattr(pod.metadata, "uid", None),
         namespace=namespace,
         pod_name=pod_name,
     )
@@ -66,9 +67,11 @@ def resolve_pod_owner(
 
     result.direct_owner_kind = direct_owner.kind
     result.direct_owner_name = direct_owner.name
+    result.direct_owner_uid = getattr(direct_owner, "uid", None)
 
     if direct_owner.kind == "Deployment":
         result.deployment_name = direct_owner.name
+        result.deployment_uid = getattr(direct_owner, "uid", None)
         return result
 
     if direct_owner.kind != "ReplicaSet":
@@ -83,9 +86,14 @@ def resolve_pod_owner(
     )
 
     replica_set_owner = _get_controller_owner(replica_set.metadata.owner_references)
+    result.replica_set_uid = getattr(replica_set.metadata, "uid", None)
+    if (result.direct_owner_uid and result.replica_set_uid
+            and result.direct_owner_uid != result.replica_set_uid):
+        raise ValueError("REPLICASET_RECREATED_DURING_COLLECTION")
 
     if replica_set_owner is not None and replica_set_owner.kind == "Deployment":
         result.deployment_name = replica_set_owner.name
+        result.deployment_uid = getattr(replica_set_owner, "uid", None)
 
     return result
 

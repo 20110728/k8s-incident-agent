@@ -6,6 +6,8 @@ from backend.app.rag.settings import RagSettings
 def build_chat_model(
     settings: RagSettings,
 ) -> ChatOpenAI:
+    from backend.app.runtime.budget import CURRENT
+    budgeted = CURRENT.get() is not None
     return ChatOpenAI(
         model=settings.llm_model,
         api_key=(
@@ -15,7 +17,7 @@ def build_chat_model(
         base_url=settings.dashscope_base_url,
         temperature=0,
         timeout=settings.llm_timeout_seconds,
-        max_retries=settings.llm_max_retries,
+        max_retries=0 if budgeted else settings.llm_max_retries,
         extra_body={
             "enable_thinking": False,
         },

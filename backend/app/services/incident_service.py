@@ -7,6 +7,12 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 from uuid import uuid4
+from backend.app.persistence.operations import approval_binding
+
+from backend.app.persistence.runs import (
+    PostgresRunRepository, QueuedModeRequired, QueuedExecutionUnavailable,
+    RunNotFound, run_summary, validate_key,
+)
 
 from langgraph.types import Command
 from pydantic import BaseModel, ValidationError
@@ -74,16 +80,22 @@ class IncidentSnapshot:
     incident_id: str
     thread_id: str
     state: dict[str, Any]
+    run: dict[str, Any] | None = None
+    execution_mode: str = "sync"
+    worker_available: bool = False
 
     @property
     def phase(self) -> str:
+        if self.run and self.run["status"] == "cancelled":
+            return "cancelled"
         value = self.state.get("phase")
         return value if isinstance(value, str) else "unknown"
 
     @property
     def waiting_for_approval(self) -> bool:
         return (
-            self.phase == "awaiting_approval"
+            (self.run is None or self.run["status"] == "waiting_approval")
+            and self.phase == "awaiting_approval"
             and self.state.get("approval_status")
             == "pending"
         )
@@ -155,6 +167,8 @@ class IncidentApplicationService:
         repository: IncidentRepositoryPort | None = None,
         *,
         id_factory: Callable[[], str] = _new_id,
+        runs: PostgresRunRepository | None = None,
+        execution_mode: str = "sync",
     ) -> None:
         self._graph = graph
         self._repository = (
@@ -163,6 +177,10 @@ class IncidentApplicationService:
             else InMemoryIncidentRepository()
         )
         self._id_factory = id_factory
+        self._runs = runs
+        self._execution_mode = execution_mode
+        if execution_mode not in {"sync", "queued"} or (execution_mode == "queued" and runs is None):
+            raise ValueError("queued mode requires a durable run repository")
 
     def _delete_failed_incident(
         self,
@@ -176,10 +194,21 @@ class IncidentApplicationService:
     def create_incident(
         self,
         request: IncidentRequest,
+        *,
+        idempotency_key: str | None = None,
     ) -> IncidentSnapshot:
         validated_request = (
             IncidentRequest.model_validate(request)
         )
+        validate_key(idempotency_key)
+        if self._execution_mode == "queued":
+            row = self._runs.accept(
+                incident_id=self._id_factory(), run_id=_new_id(), thread_id=_new_id(),
+                payload=validated_request.model_dump(mode="json"), key=idempotency_key, dialogue=True,
+            )
+            return self._snapshot_for_run(row)
+        if idempotency_key is not None:
+            raise QueuedModeRequired()
         incident_id = self._id_factory().strip()
 
         if not incident_id:
@@ -286,6 +315,10 @@ class IncidentApplicationService:
                 f"incident {normalized_id!r} was not found"
             )
 
+        run = self._runs.latest(normalized_id) if self._runs is not None else None
+        if run is not None:
+            return self._snapshot_for_run(run)
+
         try:
             snapshot = self._graph.get_state(
                 _graph_config(record.thread_id)
@@ -315,7 +348,66 @@ class IncidentApplicationService:
             incident_id=normalized_id,
             thread_id=record.thread_id,
             state=state,
+            execution_mode=self._execution_mode,
         )
+
+    def _snapshot_for_run(self, row: dict) -> IncidentSnapshot:
+        if row.get("output_snapshot") is not None and row["status"] in {"succeeded", "failed", "cancelled"}:
+            state = _normalize_state(row["output_snapshot"], incident_id=row["incident_id"])
+        elif row["status"] == "queued" and row["attempt"] == 0:
+            state = {"incident_id": row["incident_id"], "request": row["input_payload"], "phase": "created"}
+        else:
+            try:
+                values = self._graph.get_state(_graph_config(row["thread_id"])).values
+                if not values and not row.get("checkpoint_started", False) and (row["status"] in {"running", "retry_scheduled"} or
+                        (row.get("last_error") or {}).get("code") in {
+                            "WORKER_FAILED", "ATTEMPTS_EXHAUSTED", "UNSUPPORTED_OR_CORRUPT_INPUT"}):
+                    values = {"incident_id": row["incident_id"], "request": row["input_payload"],
+                              "phase": "failed" if row["status"] == "failed" else "created"}
+                if not isinstance(values, Mapping) or not values:
+                    raise IncidentGraphError("executed run checkpoint is missing")
+                state = _normalize_state(values, incident_id=row["incident_id"])
+            except IncidentGraphError:
+                raise
+            except Exception as error:
+                raise IncidentGraphError("run checkpoint lookup failed") from error
+        return IncidentSnapshot(row["incident_id"], row["thread_id"], state,
+                                run=run_summary(row), execution_mode=self._execution_mode,
+                                worker_available=self._runs.worker_available())
+
+    def get_run_snapshot(self, row: dict) -> IncidentSnapshot:
+        """Read the selected round, not the event's latest mutable projection."""
+        return self._snapshot_for_run(row)
+
+    def get_legacy_snapshot(self, incident_id: str) -> IncidentSnapshot:
+        record = self._repository.get(incident_id)
+        if record is None:
+            raise IncidentNotFoundError("incident not found")
+        try:
+            values = self._graph.get_state(_graph_config(record.thread_id)).values
+        except Exception as error:
+            raise IncidentGraphError("original checkpoint could not be read") from error
+        if not values:
+            raise IncidentNotFoundError("original checkpoint not found")
+        return IncidentSnapshot(incident_id, record.thread_id,
+                                _normalize_state(values, incident_id=incident_id),
+                                execution_mode=self._execution_mode)
+
+    def get_by_idempotency_key(self, key: str) -> IncidentSnapshot:
+        row = self._runs.by_key(key) if self._runs is not None else None
+        if row is None:
+            raise RunNotFound()
+        return self._snapshot_for_run(row)
+
+    def list_metadata(self, **kwargs) -> dict:
+        if self._runs is None:
+            raise RunNotFound()
+        return self._runs.list_metadata(**kwargs)
+
+    def list_operations(self, incident_id: str) -> dict:
+        if self._runs is None or self._repository.get(incident_id) is None:
+            raise RunNotFound()
+        return {"items": self._runs.history(incident_id)}
 
     def submit_approval(
         self,
@@ -334,7 +426,17 @@ class IncidentApplicationService:
             ) from error
 
         current = self.get_incident(incident_id)
+        if self._execution_mode == "queued" and current.run is None:
+            raise QueuedExecutionUnavailable()
         state = current.state
+        if current.run is not None:
+            row = self._runs.latest(current.incident_id)
+            saved = row.get("approval_payload") if row else None
+            if saved:
+                if saved["decision"] != validated_decision.model_dump(mode="json"):
+                    raise IncidentApprovalConflictError("approval has already been decided differently")
+                self._runs.queue_approval(row["run_id"], saved["decision"], saved["binding"])
+                return current
         raw_record = state.get("approval_record")
 
         if raw_record is not None:
@@ -402,6 +504,11 @@ class IncidentApplicationService:
             raise IncidentApprovalConflictError(
                 "approval decision does not match the pending request"
             )
+
+        if current.run is not None:
+            self._runs.queue_approval(current.run["run_id"],
+                                      validated_decision.model_dump(mode="json"), approval_binding(state))
+            return self.get_incident(incident_id)
 
         try:
             result = self._graph.invoke(

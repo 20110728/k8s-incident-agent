@@ -1,0 +1,425 @@
+{
+  "scope": "Existing synthetic fixture facts only; no graph, model, approval or write execution",
+  "results": [
+    {
+      "case_id": "normal",
+      "passed": true,
+      "assertions": [
+        {
+          "field": "resource_status",
+          "expected": "ready",
+          "observed": "ready",
+          "passed": true
+        },
+        {
+          "field": "business_status",
+          "expected": "passed",
+          "observed": "passed",
+          "passed": true
+        },
+        {
+          "field": "profile_matched",
+          "expected": true,
+          "observed": true,
+          "passed": true
+        },
+        {
+          "field": "selector_drift",
+          "expected": false,
+          "observed": false,
+          "passed": true
+        },
+        {
+          "field": "readiness_drift",
+          "expected": false,
+          "observed": false,
+          "passed": true
+        },
+        {
+          "field": "current_runtime_faults",
+          "expected": [],
+          "observed": [],
+          "passed": true
+        }
+      ]
+    },
+    {
+      "case_id": "selector_mismatch",
+      "passed": true,
+      "assertions": [
+        {
+          "field": "resource_status",
+          "expected": "not_ready",
+          "observed": "not_ready",
+          "passed": true
+        },
+        {
+          "field": "business_status",
+          "expected": "unknown",
+          "observed": "unknown",
+          "passed": true
+        },
+        {
+          "field": "profile_matched",
+          "expected": true,
+          "observed": true,
+          "passed": true
+        },
+        {
+          "field": "selector_drift",
+          "expected": true,
+          "observed": true,
+          "passed": true
+        },
+        {
+          "field": "readiness_drift",
+          "expected": false,
+          "observed": false,
+          "passed": true
+        },
+        {
+          "field": "current_runtime_faults",
+          "expected": [],
+          "observed": [],
+          "passed": true
+        }
+      ]
+    },
+    {
+      "case_id": "readiness_path_error",
+      "passed": true,
+      "assertions": [
+        {
+          "field": "resource_status",
+          "expected": "not_ready",
+          "observed": "not_ready",
+          "passed": true
+        },
+        {
+          "field": "business_status",
+          "expected": "passed",
+          "observed": "passed",
+          "passed": true
+        },
+        {
+          "field": "profile_matched",
+          "expected": true,
+          "observed": true,
+          "passed": true
+        },
+        {
+          "field": "selector_drift",
+          "expected": false,
+          "observed": false,
+          "passed": true
+        },
+        {
+          "field": "readiness_drift",
+          "expected": true,
+          "observed": true,
+          "passed": true
+        },
+        {
+          "field": "current_runtime_faults",
+          "expected": [],
+          "observed": [],
+          "passed": true
+        }
+      ]
+    },
+    {
+      "case_id": "dependency_unavailable",
+      "passed": true,
+      "assertions": [
+        {
+          "field": "resource_status",
+          "expected": "not_ready",
+          "observed": "not_ready",
+          "passed": true
+        },
+        {
+          "field": "business_status",
+          "expected": "unknown",
+          "observed": "unknown",
+          "passed": true
+        },
+        {
+          "field": "profile_matched",
+          "expected": true,
+          "observed": true,
+          "passed": true
+        },
+        {
+          "field": "selector_drift",
+          "expected": false,
+          "observed": false,
+          "passed": true
+        },
+        {
+          "field": "readiness_drift",
+          "expected": false,
+          "observed": false,
+          "passed": true
+        },
+        {
+          "field": "current_runtime_faults",
+          "expected": [],
+          "observed": [],
+          "passed": true
+        }
+      ]
+    },
+    {
+      "case_id": "api500",
+      "passed": true,
+      "assertions": [
+        {
+          "field": "resource_status",
+          "expected": "ready",
+          "observed": "ready",
+          "passed": true
+        },
+        {
+          "field": "business_status",
+          "expected": "failed",
+          "observed": "failed",
+          "passed": true
+        },
+        {
+          "field": "profile_matched",
+          "expected": true,
+          "observed": true,
+          "passed": true
+        },
+        {
+          "field": "selector_drift",
+          "expected": false,
+          "observed": false,
+          "passed": true
+        },
+        {
+          "field": "readiness_drift",
+          "expected": false,
+          "observed": false,
+          "passed": true
+        },
+        {
+          "field": "current_runtime_faults",
+          "expected": [],
+          "observed": [],
+          "passed": true
+        }
+      ]
+    },
+    {
+      "case_id": "wrong_content",
+      "passed": true,
+      "assertions": [
+        {
+          "field": "resource_status",
+          "expected": "ready",
+          "observed": "ready",
+          "passed": true
+        },
+        {
+          "field": "business_status",
+          "expected": "failed",
+          "observed": "failed",
+          "passed": true
+        },
+        {
+          "field": "profile_matched",
+          "expected": true,
+          "observed": true,
+          "passed": true
+        },
+        {
+          "field": "selector_drift",
+          "expected": false,
+          "observed": false,
+          "passed": true
+        },
+        {
+          "field": "readiness_drift",
+          "expected": false,
+          "observed": false,
+          "passed": true
+        },
+        {
+          "field": "current_runtime_faults",
+          "expected": [],
+          "observed": [],
+          "passed": true
+        }
+      ]
+    },
+    {
+      "case_id": "historical_recovered",
+      "passed": true,
+      "assertions": [
+        {
+          "field": "resource_status",
+          "expected": "ready",
+          "observed": "ready",
+          "passed": true
+        },
+        {
+          "field": "business_status",
+          "expected": "passed",
+          "observed": "passed",
+          "passed": true
+        },
+        {
+          "field": "profile_matched",
+          "expected": true,
+          "observed": true,
+          "passed": true
+        },
+        {
+          "field": "selector_drift",
+          "expected": false,
+          "observed": false,
+          "passed": true
+        },
+        {
+          "field": "readiness_drift",
+          "expected": false,
+          "observed": false,
+          "passed": true
+        },
+        {
+          "field": "current_runtime_faults",
+          "expected": [],
+          "observed": [],
+          "passed": true
+        }
+      ]
+    },
+    {
+      "case_id": "evidence_missing",
+      "passed": true,
+      "assertions": [
+        {
+          "field": "resource_status",
+          "expected": "ready",
+          "observed": "ready",
+          "passed": true
+        },
+        {
+          "field": "business_status",
+          "expected": "unknown",
+          "observed": "unknown",
+          "passed": true
+        },
+        {
+          "field": "profile_matched",
+          "expected": true,
+          "observed": true,
+          "passed": true
+        },
+        {
+          "field": "selector_drift",
+          "expected": false,
+          "observed": false,
+          "passed": true
+        },
+        {
+          "field": "readiness_drift",
+          "expected": false,
+          "observed": false,
+          "passed": true
+        },
+        {
+          "field": "current_runtime_faults",
+          "expected": [],
+          "observed": [],
+          "passed": true
+        }
+      ]
+    },
+    {
+      "case_id": "log_instruction",
+      "passed": true,
+      "assertions": [
+        {
+          "field": "resource_status",
+          "expected": "not_ready",
+          "observed": "not_ready",
+          "passed": true
+        },
+        {
+          "field": "business_status",
+          "expected": "unknown",
+          "observed": "unknown",
+          "passed": true
+        },
+        {
+          "field": "profile_matched",
+          "expected": true,
+          "observed": true,
+          "passed": true
+        },
+        {
+          "field": "selector_drift",
+          "expected": false,
+          "observed": false,
+          "passed": true
+        },
+        {
+          "field": "readiness_drift",
+          "expected": true,
+          "observed": true,
+          "passed": true
+        },
+        {
+          "field": "current_runtime_faults",
+          "expected": [],
+          "observed": [],
+          "passed": true
+        }
+      ]
+    },
+    {
+      "case_id": "changed_after_approval",
+      "passed": true,
+      "assertions": [
+        {
+          "field": "resource_status",
+          "expected": "not_ready",
+          "observed": "not_ready",
+          "passed": true
+        },
+        {
+          "field": "business_status",
+          "expected": "unknown",
+          "observed": "unknown",
+          "passed": true
+        },
+        {
+          "field": "profile_matched",
+          "expected": true,
+          "observed": true,
+          "passed": true
+        },
+        {
+          "field": "selector_drift",
+          "expected": false,
+          "observed": false,
+          "passed": true
+        },
+        {
+          "field": "readiness_drift",
+          "expected": true,
+          "observed": true,
+          "passed": true
+        },
+        {
+          "field": "current_runtime_faults",
+          "expected": [],
+          "observed": [],
+          "passed": true
+        }
+      ]
+    }
+  ]
+}

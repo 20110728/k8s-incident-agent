@@ -1,6 +1,9 @@
 from typing import Any, Literal
+from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
+from backend.app.investigation.presentation import investigation_view
+from backend.app.investigation.public_evidence import evidence_previews
 
 from backend.app.agent.schemas import (
     ActionExecutionResult,
@@ -43,8 +46,29 @@ class CreateIncidentRequest(IncidentRequest):
 class SubmitApprovalRequest(ApprovalDecision):
     """Strict HTTP payload used to resume a pending approval."""
 
+class RunSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    run_id: str
+    status: Literal["queued", "running", "waiting_user", "waiting_approval", "retry_scheduled", "reconciling", "succeeded", "failed", "cancelled"]
+    run_kind: Literal["diagnosis", "interaction"]
+    created_at: datetime
+    updated_at: datetime
+    finished_at: datetime | None
+    attempt: int = Field(ge=0)
+    last_error_code: str | None
+    stop_requested: bool = False
+    invalidated_at: datetime | None = None
+    question: dict[str, Any] | None = None
+    adopted_message_ids: list[str] = Field(default_factory=list)
+
+
 class IncidentStatusResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+    run: RunSummary | None = None
+    execution_mode: Literal["sync", "queued"] = "sync"
+    worker_available: bool = False
+    investigation: dict[str, Any] | None = None
 
     incident_id: str = Field(min_length=1)
     thread_id: str = Field(min_length=1)
@@ -76,6 +100,9 @@ class IncidentStatusResponse(BaseModel):
     llm_usage: dict[str, int] = Field(
         default_factory=dict,
     )
+    clarification_exhausted: bool = False
+    clarification_round: int = 0
+    clarification_answers: list[dict[str, Any]] = Field(default_factory=list)
     diagnosis_retry_count: int = Field(
         default=0,
         ge=0,
@@ -120,6 +147,7 @@ class IncidentStatusResponse(BaseModel):
         waiting_for_approval: bool,
     ) -> "IncidentStatusResponse":
         return cls(
+            investigation=investigation_view(state),
             incident_id=incident_id,
             thread_id=thread_id,
             phase=str(
@@ -138,7 +166,7 @@ class IncidentStatusResponse(BaseModel):
             collection_plan=list(
                 state.get("collection_plan") or []
             ),
-            evidence=list(
+            evidence=evidence_previews(
                 state.get("evidence") or []
             ),
             service_profile=state.get("service_profile"),
@@ -156,6 +184,9 @@ class IncidentStatusResponse(BaseModel):
             llm_usage=dict(
                 state.get("llm_usage") or {}
             ),
+            clarification_exhausted=bool(state.get("clarification_exhausted", False)),
+            clarification_round=int(state.get("clarification_round", 0)),
+            clarification_answers=list(state.get("clarification_answers", [])),
             diagnosis_retry_count=int(
                 state.get("diagnosis_retry_count")
                 or 0

@@ -5,6 +5,9 @@ from contextlib import contextmanager
 from functools import partial
 
 from fastapi import Request
+from backend.app.config import get_api_settings
+from backend.app.persistence.runs import PostgresRunRepository, QueuedExecutionUnavailable
+from backend.app.persistence.operations import OperationRepository
 
 from backend.app.agent.dependencies import (
     build_diagnosis_service,
@@ -36,7 +39,20 @@ def build_incident_service(
     *,
     checkpointer: object,
     repository: IncidentRepositoryPort,
+    runs: PostgresRunRepository | None = None,
+    execution_mode: str = "sync",
 ) -> IncidentApplicationService:
+    if execution_mode == "queued":
+        disabled = _DisabledWorkflowDependency()
+        graph = build_incident_graph(
+            collector=disabled, retriever=disabled, diagnoser=disabled,
+            planner=disabled, executor=disabled, verifier=disabled,
+            checkpointer=checkpointer,
+            dialogue=True,
+        )
+        return IncidentApplicationService(
+            _ReadOnlyGraph(graph, runs=runs, checkpointer=checkpointer), repository, runs=runs, execution_mode=execution_mode,
+        )
     graph = build_incident_graph(
         collector=build_kubernetes_collector(),
         retriever=build_runbook_retriever(),
@@ -50,11 +66,43 @@ def build_incident_service(
     return IncidentApplicationService(
         graph,
         repository,
+        runs=runs,
+        execution_mode=execution_mode,
     )
 
 
+class _DisabledWorkflowDependency:
+    def __getattr__(self, name):
+        def unavailable(*args, **kwargs):
+            raise QueuedExecutionUnavailable()
+        return unavailable
+
+
+class _ReadOnlyGraph:
+    def __init__(self, graph, *, runs=None, checkpointer=None):
+        self._graph = graph
+        self._runs, self._checkpointer = runs, checkpointer
+        self._investigation_graph = None
+
+    def get_state(self, config):
+        if self._runs is not None:
+            from backend.app.services.round_context import INVESTIGATION_WORKFLOW
+            rows = self._runs._read("SELECT workflow_version FROM incident_agent_app.runs WHERE thread_id=%s",
+                                   (config["configurable"]["thread_id"],))
+            if rows and rows[0]["workflow_version"] == INVESTIGATION_WORKFLOW:
+                if self._investigation_graph is None:
+                    from backend.app.investigation.graph import build_investigation_graph
+                    self._investigation_graph = build_investigation_graph(None, None, None,
+                        checkpointer=self._checkpointer, interactive=True, production=True)
+                return self._investigation_graph.get_state(config)
+        return self._graph.get_state(config)
+
+    def invoke(self, *args, **kwargs):
+        raise QueuedExecutionUnavailable()
+
+
 @contextmanager
-def incident_service_context() -> (
+def incident_service_context(*, execution_mode: str | None = None) -> (
     Iterator[IncidentApplicationService]
 ):
     settings = get_database_settings()
@@ -74,6 +122,8 @@ def incident_service_context() -> (
         yield build_incident_service(
             checkpointer=checkpointer,
             repository=repository,
+            runs=OperationRepository(connection_factory),
+            execution_mode=execution_mode or get_api_settings().execution_mode,
         )
 
 

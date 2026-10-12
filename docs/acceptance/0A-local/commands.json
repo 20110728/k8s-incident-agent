@@ -1,0 +1,92 @@
+[
+  {
+    "command": [
+      "python",
+      "-m",
+      "unittest",
+      "backend.tests.compatibility.test_stage0a_samples",
+      "-v"
+    ],
+    "cwd": ".",
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": "test_changed_plan_cannot_reuse_frozen_approval (backend.tests.compatibility.test_stage0a_samples.LegacyContracts.test_changed_plan_cannot_reuse_frozen_approval) ... ok\ntest_old_resource_success_does_not_imply_business_success (backend.tests.compatibility.test_stage0a_samples.LegacyContracts.test_old_resource_success_does_not_imply_business_success) ... ok\ntest_pending_approval_binding_and_read_only_roundtrip (backend.tests.compatibility.test_stage0a_samples.LegacyContracts.test_pending_approval_binding_and_read_only_roundtrip) ... ok\ntest_recheck_rejects_claimed_write_or_model_call (backend.tests.compatibility.test_stage0a_samples.LegacyContracts.test_recheck_rejects_claimed_write_or_model_call) ... ok\ntest_saved_recheck_is_independent_and_unattributed (backend.tests.compatibility.test_stage0a_samples.LegacyContracts.test_saved_recheck_is_independent_and_unattributed) ... ok\ntest_ten_legacy_fixture_facts_without_graph_dependencies (backend.tests.compatibility.test_stage0a_samples.LegacyContracts.test_ten_legacy_fixture_facts_without_graph_dependencies) ... ok\n\n----------------------------------------------------------------------\nRan 6 tests in 0.019s\n\nOK\n"
+  },
+  {
+    "command": [
+      "python",
+      "-m",
+      "pytest",
+      "backend/tests/fault_cases",
+      "-q"
+    ],
+    "cwd": ".",
+    "exit_code": 1,
+    "stdout": "",
+    "stderr": "D:\\App\\conda\\python.exe: No module named pytest\n"
+  },
+  {
+    "command": [
+      "python",
+      "-m",
+      "pytest",
+      "backend/tests/agent/test_graph_human_approval.py",
+      "backend/tests/agent/test_graph_execution.py",
+      "backend/tests/agent/test_execution_policy.py",
+      "backend/tests/api/test_incident_approval_service.py",
+      "backend/tests/api/test_persistent_incident_service.py",
+      "backend/tests/api/test_rechecks.py",
+      "backend/tests/persistence",
+      "-q"
+    ],
+    "cwd": ".",
+    "exit_code": 1,
+    "stdout": "",
+    "stderr": "D:\\App\\conda\\python.exe: No module named pytest\n"
+  },
+  {
+    "command": [
+      "npm",
+      "test"
+    ],
+    "cwd": "frontend",
+    "exit_code": null,
+    "started": false,
+    "error": "Executable not found: npm"
+  },
+  {
+    "command": [
+      "npm",
+      "run",
+      "build"
+    ],
+    "cwd": "frontend",
+    "exit_code": null,
+    "started": false,
+    "error": "Executable not found: npm"
+  },
+  {
+    "command": [
+      "python",
+      "-m",
+      "scripts.audit_stage0a",
+      "--help"
+    ],
+    "cwd": ".",
+    "exit_code": 0,
+    "stdout": "usage: audit_stage0a.py [-h]\n\nRead-only baseline inventory; no DB, Kubernetes, model or application startup.\nRun from the repository: python -m scripts.audit_stage0a Exit 0 means\ninventory collected, NOT acceptance passed. No environment values or\ndependency download URLs are included. Redirect stdout to preserve evidence.\n\noptions:\n  -h, --help  show this help message and exit\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "python",
+      "-m",
+      "scripts.audit_stage0a",
+      "--invalid-option"
+    ],
+    "cwd": ".",
+    "exit_code": 2,
+    "stdout": "",
+    "stderr": "usage: audit_stage0a.py [-h]\naudit_stage0a.py: error: unrecognized arguments: --invalid-option\n"
+  }
+]

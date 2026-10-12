@@ -10,6 +10,12 @@ metadata:
   name: incident-agent-reader
   namespace: agent-demo
 rules:
+  # The reader may call only the fixed business checker, not arbitrary proxies.
+  - apiGroups: [""]
+    resources: [services/proxy]
+    resourceNames: [incident-agent-business-probe, "incident-agent-business-probe:80"]
+    verbs: [get]
+
   - apiGroups:
       - ""
     resources:

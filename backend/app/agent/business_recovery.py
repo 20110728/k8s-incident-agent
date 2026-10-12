@@ -74,6 +74,16 @@ class BusinessRecoveryVerifier:
                 expected_generation = (
                     generation + 1 if type(generation) is int else None
                 )
+            # Journaled writes carry the actual API response. Only legacy
+            # results without identity metadata retain the old inference.
+            response = action.get("after_snapshot") or {}
+            if response.get("uid"):
+                if action.get("action") == "patch_readiness_probe":
+                    expected_generation = response.get("generation")
+                    if response["uid"] != snapshot.get("deployment_uid"):
+                        raise ValueError("RECOVERY_TARGET_CHANGED_OR_UNBOUND")
+                elif (bundle.get("service") or {}).get("uid") != response["uid"]:
+                    raise ValueError("RECOVERY_TARGET_CHANGED_OR_UNBOUND")
             if (
                 snapshot.get("status") != "matched"
                 or not original.get("digest")

@@ -17,6 +17,13 @@ class IncidentState(TypedDict, total=False):
     # 请求身份
     incident_id: str
     request: dict[str, str]
+    round_context: dict[str, Any]
+    run_id: str
+    question: dict[str, Any] | None
+    clarification_round: int
+    asked_slots: list[str]
+    clarification_answers: list[dict[str, Any]]
+    clarification_exhausted: bool
 
     # 工作流控制
     phase: str

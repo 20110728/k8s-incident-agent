@@ -1,4 +1,5 @@
 from typing import Any
+from backend.app.persistence.runs import RunError
 
 from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
@@ -56,6 +57,10 @@ def _error_response(
 def register_exception_handlers(
     app: FastAPI,
 ) -> None:
+    @app.exception_handler(RunError)
+    async def handle_run_error(request: Request, error: RunError) -> JSONResponse:
+        return _error_response(status_code=error.status_code, code=error.code, message=error.message)
+
     @app.exception_handler(ApiError)
     async def handle_api_error(
         request: Request,
@@ -79,7 +84,13 @@ def register_exception_handlers(
             status_code=422,
             code="REQUEST_VALIDATION_ERROR",
             message="Request validation failed.",
-            details=error.errors(),
+            # Validator ctx can contain ValueError objects, which cannot pass
+            # ErrorResponse.model_dump(mode="json"). Return the public field
+            # diagnostics only, not exception objects or the submitted payload.
+            details=[
+                {"loc": item["loc"], "type": item["type"], "msg": item["msg"]}
+                for item in error.errors()
+            ],
         )
 
     @app.exception_handler(StarletteHTTPException)

@@ -48,9 +48,13 @@ def test_incident_service_context_owns_resources(
         *,
         checkpointer,
         repository,
+        runs,
+        execution_mode,
     ):
         assert checkpointer is saver
         assert repository is not None
+        assert runs is not None
+        assert execution_mode == "sync"
         events.append("service_built")
         return service
 
@@ -80,7 +84,7 @@ def test_incident_service_context_owns_resources(
         fake_build_incident_service,
     )
 
-    with dependencies.incident_service_context() as result:
+    with dependencies.incident_service_context(execution_mode="sync") as result:
         assert result is service
         events.append("service_used")
 

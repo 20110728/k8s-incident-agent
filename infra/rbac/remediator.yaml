@@ -4,6 +4,7 @@ metadata:
   name: incident-agent-remediator
   namespace: agent-demo
 rules:
+  # RBAC limits resource names/verbs, NOT patch fields. Field checks live in the executor.
   - apiGroups:
       - ""
     resources:

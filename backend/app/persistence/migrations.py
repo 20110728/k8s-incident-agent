@@ -115,6 +115,218 @@ MIGRATIONS = (
                 ON incident_agent_app.rechecks (incident_id, sequence DESC)""",
         ),
     ),
+    Migration(
+        version=3,
+        name="create_runs",
+        statements=(
+            """CREATE TABLE incident_agent_app.runs (
+                run_id TEXT PRIMARY KEY,
+                incident_id TEXT NOT NULL REFERENCES incident_agent_app.incidents(incident_id),
+                thread_id TEXT NOT NULL UNIQUE,
+                run_kind TEXT NOT NULL DEFAULT 'diagnosis' CHECK (run_kind = 'diagnosis'),
+                parent_run_id TEXT REFERENCES incident_agent_app.runs(run_id),
+                input_revision INTEGER NOT NULL DEFAULT 1 CHECK (input_revision >= 1),
+                input_payload JSONB NOT NULL CHECK (jsonb_typeof(input_payload) = 'object'),
+                input_sha256 TEXT NOT NULL CHECK (input_sha256 ~ '^[0-9a-f]{64}$'),
+                workflow_version TEXT NOT NULL DEFAULT 'incident-v1',
+                idempotency_scope TEXT,
+                idempotency_key TEXT,
+                request_sha256 TEXT NOT NULL CHECK (request_sha256 ~ '^[0-9a-f]{64}$'),
+                status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN (
+                    'queued','running','waiting_user','waiting_approval',
+                    'retry_scheduled','reconciling','succeeded','failed','cancelled')),
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                finished_at TIMESTAMPTZ,
+                last_error JSONB,
+                attempt INTEGER NOT NULL DEFAULT 0 CHECK (attempt >= 0),
+                lease_owner TEXT,
+                lease_epoch BIGINT NOT NULL DEFAULT 0 CHECK (lease_epoch >= 0),
+                lease_expires_at TIMESTAMPTZ,
+                heartbeat_at TIMESTAMPTZ,
+                next_retry_at TIMESTAMPTZ,
+                CONSTRAINT runs_idempotency_pair CHECK (
+                    (idempotency_scope IS NULL AND idempotency_key IS NULL) OR
+                    (idempotency_scope IS NOT NULL AND idempotency_key IS NOT NULL)),
+                CONSTRAINT runs_idempotency_unique UNIQUE (idempotency_scope,idempotency_key)
+            )""",
+            """CREATE UNIQUE INDEX runs_one_active_per_incident
+                ON incident_agent_app.runs (incident_id)
+                WHERE status IN ('queued','running','waiting_user','waiting_approval','retry_scheduled','reconciling')""",
+            """CREATE INDEX runs_incident_created_idx ON incident_agent_app.runs
+                (incident_id, created_at DESC, run_id DESC)""",
+        ),
+    ),
+)
+
+
+MIGRATIONS += (
+    Migration(
+        version=4,
+        name="worker_presence",
+        statements=(
+            """CREATE TABLE incident_agent_app.workers (
+                worker_id TEXT PRIMARY KEY,
+                expires_at TIMESTAMPTZ NOT NULL
+            )""",
+            """CREATE INDEX runs_claim_idx ON incident_agent_app.runs (created_at,run_id)
+                WHERE status IN ('queued','retry_scheduled','running')""",
+        ),
+    ),
+)
+
+
+MIGRATIONS += (
+    Migration(5, "checkpoint_start_marker", (
+        "ALTER TABLE incident_agent_app.runs ADD COLUMN checkpoint_started BOOLEAN NOT NULL DEFAULT FALSE",
+        "UPDATE incident_agent_app.runs SET checkpoint_started=TRUE WHERE attempt>0",
+    )),
+)
+
+
+MIGRATIONS += (
+    Migration(6, "operation_ledger", (
+        "ALTER TABLE incident_agent_app.runs ADD COLUMN approval_payload JSONB",
+        """CREATE TABLE incident_agent_app.operations (
+            operation_id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL UNIQUE REFERENCES incident_agent_app.runs(run_id),
+            incident_id TEXT NOT NULL REFERENCES incident_agent_app.incidents(incident_id),
+            approval_id TEXT NOT NULL,
+            plan_revision TEXT NOT NULL,
+            plan_snapshot JSONB NOT NULL,
+            approval_snapshot JSONB NOT NULL,
+            action TEXT NOT NULL CHECK (action IN ('patch_service_selector','patch_readiness_probe')),
+            state TEXT NOT NULL CHECK (state IN ('prepared','dispatching','succeeded','rejected','outcome_unknown','reconciled','manual_required')),
+            lease_epoch BIGINT NOT NULL,
+            before_snapshot JSONB NOT NULL,
+            target_snapshot JSONB NOT NULL,
+            request_patch JSONB NOT NULL,
+            response_snapshot JSONB,
+            observed_snapshot JSONB,
+            result JSONB,
+            attribution TEXT NOT NULL DEFAULT 'not_established' CHECK (attribution IN ('confirmed','not_established')),
+            error_code TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+            dispatched_at TIMESTAMPTZ,
+            responded_at TIMESTAMPTZ,
+            reconciled_at TIMESTAMPTZ,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+        )""",
+        "CREATE INDEX operations_incident_idx ON incident_agent_app.operations (incident_id,created_at)",
+    )),
+)
+
+
+MIGRATIONS += (
+    Migration(7, "incident_messages", (
+        """CREATE TABLE incident_agent_app.messages (
+            message_id TEXT PRIMARY KEY,
+            incident_id TEXT NOT NULL REFERENCES incident_agent_app.incidents(incident_id),
+            sequence BIGINT NOT NULL CHECK (sequence > 0),
+            client_message_id VARCHAR(128) NOT NULL,
+            role TEXT NOT NULL CHECK (role IN ('user','assistant','tool')),
+            source TEXT NOT NULL,
+            content TEXT NOT NULL CHECK (length(btrim(content)) BETWEEN 1 AND 16000),
+            related_run_id TEXT REFERENCES incident_agent_app.runs(run_id),
+            evidence_refs JSONB NOT NULL DEFAULT '[]',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+            UNIQUE (incident_id, sequence),
+            UNIQUE (incident_id, role, client_message_id),
+            CHECK ((role='user' AND source='user_supplied') OR
+                   (role='assistant' AND source='model_generated') OR
+                   (role='tool' AND source='tool_observed'))
+        )""",
+    )),
+)
+
+
+MIGRATIONS += (
+    Migration(8, "incident_rounds", (
+        "ALTER TABLE incident_agent_app.runs ADD COLUMN source_message_id TEXT REFERENCES incident_agent_app.messages(message_id)",
+        "ALTER TABLE incident_agent_app.runs ADD COLUMN input_message_sequence BIGINT",
+        "ALTER TABLE incident_agent_app.runs ADD COLUMN context_snapshot JSONB",
+        "ALTER TABLE incident_agent_app.runs ADD COLUMN context_sha256 TEXT",
+        "ALTER TABLE incident_agent_app.runs ADD COLUMN output_snapshot JSONB",
+        "CREATE UNIQUE INDEX runs_source_message_unique ON incident_agent_app.runs(source_message_id) WHERE source_message_id IS NOT NULL",
+    )),
+)
+
+
+MIGRATIONS += (
+    Migration(9, "interaction_tasks", (
+        "ALTER TABLE incident_agent_app.runs DROP CONSTRAINT runs_run_kind_check",
+        "ALTER TABLE incident_agent_app.runs ADD CONSTRAINT runs_run_kind_check CHECK (run_kind IN ('diagnosis','interaction'))",
+        "ALTER TABLE incident_agent_app.runs ADD COLUMN interaction_progress JSONB NOT NULL DEFAULT '{}'",
+        "DROP INDEX incident_agent_app.runs_one_active_per_incident",
+        """CREATE UNIQUE INDEX runs_one_active_per_incident ON incident_agent_app.runs(incident_id,run_kind)
+            WHERE status IN ('queued','running','waiting_user','waiting_approval','retry_scheduled','reconciling')""",
+        "ALTER TABLE incident_agent_app.rechecks ADD COLUMN run_id TEXT UNIQUE REFERENCES incident_agent_app.runs(run_id)",
+    )),
+)
+
+
+MIGRATIONS += (
+    Migration(10, "dialogue_controls", (
+        "ALTER TABLE incident_agent_app.incidents ADD COLUMN event_revision BIGINT NOT NULL DEFAULT 0",
+        "ALTER TABLE incident_agent_app.runs ADD COLUMN event_revision BIGINT NOT NULL DEFAULT 0",
+        "ALTER TABLE incident_agent_app.runs ADD COLUMN stop_requested BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE incident_agent_app.runs ADD COLUMN invalidated_at TIMESTAMPTZ",
+        "ALTER TABLE incident_agent_app.runs ADD COLUMN question_payload JSONB",
+        "ALTER TABLE incident_agent_app.runs ADD COLUMN answer_payload JSONB",
+        "ALTER TABLE incident_agent_app.runs ADD COLUMN adopted_message_ids JSONB NOT NULL DEFAULT '[]'",
+        "ALTER TABLE incident_agent_app.runs ADD COLUMN attempt_base INTEGER NOT NULL DEFAULT 0",
+        """CREATE TABLE incident_agent_app.controls (
+            control_id TEXT PRIMARY KEY, incident_id TEXT NOT NULL REFERENCES incident_agent_app.incidents(incident_id),
+            client_message_id TEXT NOT NULL, request_sha256 TEXT NOT NULL, request JSONB NOT NULL,
+            message_id TEXT NOT NULL REFERENCES incident_agent_app.messages(message_id),
+            parent_run_id TEXT REFERENCES incident_agent_app.runs(run_id), snapshot JSONB NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('saved','pending','started','superseded')),
+            result JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+            UNIQUE(incident_id,client_message_id))""",
+        "CREATE INDEX controls_pending_idx ON incident_agent_app.controls(created_at) WHERE status='pending'",
+    )),
+)
+
+
+MIGRATIONS += (
+    Migration(11, "observation_windows", (
+        """CREATE TABLE incident_agent_app.observation_windows (
+            observation_key TEXT PRIMARY KEY,
+            incident_id TEXT NOT NULL REFERENCES incident_agent_app.incidents(incident_id),
+            run_id TEXT REFERENCES incident_agent_app.runs(run_id),
+            owner_token TEXT NOT NULL, payload JSONB NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp())""",
+        "CREATE INDEX observations_incident_idx ON incident_agent_app.observation_windows(incident_id,created_at)",
+    )),
+)
+
+
+MIGRATIONS += (
+    Migration(12, "delayed_rechecks", (
+        """CREATE TABLE incident_agent_app.delayed_rechecks (
+            sequence BIGSERIAL PRIMARY KEY, delayed_id TEXT NOT NULL UNIQUE,
+            observation_key TEXT NOT NULL REFERENCES incident_agent_app.observation_windows(observation_key),
+            policy_version TEXT NOT NULL, incident_id TEXT NOT NULL REFERENCES incident_agent_app.incidents(incident_id),
+            source_run_id TEXT REFERENCES incident_agent_app.runs(run_id),
+            basis_run_id TEXT, event_revision BIGINT NOT NULL, target JSONB NOT NULL,
+            snapshot JSONB NOT NULL, initial_result JSONB NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','running','passed','relapsed','unknown','invalidated','expired')),
+            due_at TIMESTAMPTZ NOT NULL, expires_at TIMESTAMPTZ NOT NULL, next_attempt_at TIMESTAMPTZ NOT NULL,
+            run_id TEXT UNIQUE REFERENCES incident_agent_app.runs(run_id), result JSONB, reason TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(), finished_at TIMESTAMPTZ,
+            UNIQUE(observation_key,policy_version))""",
+        "CREATE INDEX delayed_rechecks_due_idx ON incident_agent_app.delayed_rechecks(next_attempt_at) WHERE status IN ('pending','running')",
+        "CREATE INDEX delayed_rechecks_history_idx ON incident_agent_app.delayed_rechecks(incident_id,sequence DESC)",
+    )),
+)
+
+
+MIGRATIONS += (
+    Migration(13, "run_budgets", (
+        """CREATE TABLE incident_agent_app.run_budgets (
+            run_id TEXT PRIMARY KEY REFERENCES incident_agent_app.runs(run_id), payload JSONB NOT NULL)""",
+    )),
 )
 
 
@@ -127,6 +339,8 @@ def run_migrations(
 
     with connection.transaction():
         with connection.cursor() as cursor:
+            # Serialize application migrations across simultaneous API starts.
+            cursor.execute("SELECT pg_advisory_xact_lock(734219801)")
             cursor.execute(
                 "CREATE SCHEMA IF NOT EXISTS "
                 f"{APP_SCHEMA}"

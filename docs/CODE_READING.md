@@ -1,6 +1,14 @@
 # 代码阅读指南
 
-本文描述恢复闭环与只读复查阶段存档。路径均相对于仓库根目录；历史 day 文档保留当时设计，当前行为以源码为准。
+本文于 2026-10-12 更新为当前多轮调查阅读入口。路径均相对于仓库根目录；旧单轮与历史 day 文档继续保留，不能当作新调查唯一入口。
+
+## 当前多轮入口
+
+先读 `runtime/worker.py`、`runtime/recovery.py` 和 `persistence/runs.py`（均位于 `backend/app/`），理解任务领取、租约与恢复；再读 `investigation/graph.py`、`context.py`、`working_context.py`、`log_projection.py`，理解决策、取证及模型输入表示。
+
+诊断通过 `agent/diagnosis_policy.py` 校验，`investigation/production.py` 按登记配置生成计划；审批与身份门槛继续复用 agent 模块，实际持久化操作协议见 `runtime/operations.py` 和 `persistence/operations.py`。连续观察见 `agent/observation.py`，延时复查见 `runtime/delayed_rechecks.py`。
+
+`scripts/export_investigation_debug.py` 导出调查与模型记录，`scripts/export_remediation_debug.py` 单独导出恢复审计；都只读取保存记录。下文 agent 图仍用于理解共享节点与旧路径，不表示新调查使用旧诊断/规划模型。
 
 ## 按一次事件阅读
 
@@ -23,7 +31,7 @@
 - `compare_targets` 只比较已有明确字段，不把局部比较描述为完整对象身份一致。
 - 仓储独立 INSERT，事务完成后才返回成功；历史按数据库 sequence 分页，不读改写原事件的数组。
 - `backend/app/persistence/migrations.py` 通过迁移 2 新增表；`scripts/recheck_incident.py` 提供调用、历史和原事件未变检查。
-- Web 尚未接入此路径，GET 原事件不会自动附带复查历史。
+- Web 已有单次重新检查、观察稳定性及历史展示；页面控制流程与旧独立复查 API 分开阅读，不能套用旧页面限制。
 
 ## 字段语义
 
@@ -55,4 +63,4 @@
 
 `backend/app/diagnosis/` 仍有规则引擎 CLI 与测试用途，后续可作为对比基线的起点，尚不是公平完整的业务诊断基准。历史 profile、smoke 入口、迁移与阶段文档不因“旧”就可删除。
 
-本次只对五个近期核心 Python 文件补充解释性注释并局部格式化，保持 AST 一致；没有全仓重排、删除兼容入口或改变业务行为。
+阶段测试仍承担回归与夹具依赖，不按文件名中的阶段号删除。

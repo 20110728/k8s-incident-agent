@@ -2,7 +2,7 @@ from functools import lru_cache
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
     SettingsConfigDict,
@@ -17,10 +17,11 @@ class ApiSettings(BaseSettings):
         env_file_encoding="utf-8",
         env_prefix="INCIDENT_AGENT_API_",
         extra="ignore",
+        populate_by_name=True,
     )
 
     app_name: str = "Kubernetes Incident Agent API"
-    app_version: str = "0.1.0"
+    app_version: str = "0.2.0"
     environment: Literal[
         "development",
         "test",
@@ -31,6 +32,16 @@ class ApiSettings(BaseSettings):
         pattern=r"^/[a-zA-Z0-9/_-]*$",
     )
     docs_enabled: bool = True
+    execution_mode: Literal["sync", "queued"] = Field(
+        default="sync", validation_alias="INCIDENT_AGENT_EXECUTION_MODE",
+    )
+    investigation_enabled: bool = Field(default=False, validation_alias="INCIDENT_AGENT_INVESTIGATION_ENABLED")
+
+    @model_validator(mode="after")
+    def investigation_requires_worker(self):
+        if self.investigation_enabled and self.execution_mode != "queued":
+            raise ValueError("INVESTIGATION_REQUIRES_QUEUED")
+        return self
 
     cors_allowed_origins: tuple[str, ...] = (
         "http://127.0.0.1:5173",

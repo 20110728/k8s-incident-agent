@@ -12,9 +12,6 @@ from backend.app.tools.client import (
     KubernetesClients,
 )
 
-MAX_LOG_LINES = 500
-MAX_LOG_CHARACTERS = 20_000
-
 
 def _to_isoformat(
     value: datetime | None,
@@ -113,6 +110,8 @@ def get_pod_status(
         )
 
     return PodInfo(
+        uid=getattr(pod.metadata, "uid", None),
+        resource_version=getattr(pod.metadata, "resource_version", None),
         namespace=namespace,
         name=pod.metadata.name,
         phase=pod.status.phase or "Unknown",
@@ -170,27 +169,22 @@ def get_pod_logs(
     pod_name: str,
     container_name: str | None = None,
     previous: bool = False,
-    tail_lines: int = 200,
+    tail_lines: int | None = None,
 ) -> PodLogInfo:
-    safe_tail_lines = min(
-        max(tail_lines, 1),
-        MAX_LOG_LINES,
-    )
-
+    from backend.app.tools.log_text import read_log_response, sample_log_text, LOG_LINES, LOG_BYTES
     content = clients.core.read_namespaced_pod_log(
         name=pod_name,
         namespace=namespace,
         container=container_name,
         previous=previous,
-        tail_lines=safe_tail_lines,
+        tail_lines=LOG_LINES,
+        limit_bytes=LOG_BYTES,
         timestamps=True,
+        _preload_content=False,
         _request_timeout=REQUEST_TIMEOUT,
     )
 
-    truncated = len(content) > MAX_LOG_CHARACTERS
-
-    if truncated:
-        content = content[-MAX_LOG_CHARACTERS:]
+    content, truncated = sample_log_text(read_log_response(content))
 
     return PodLogInfo(
         namespace=namespace,

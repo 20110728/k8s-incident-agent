@@ -4,10 +4,10 @@ import type {
   IncidentStatusResponse,
   RetrievedRunbook,
 } from '../../api'
+import { EvidenceBody } from './EvidenceBody'
 
 import {
   evidenceElementId,
-  formatConfidence,
   formatLabel,
   formatTimestamp,
   formatVectorDistance,
@@ -63,16 +63,6 @@ function DiagnosisPanel({
               </strong>
             </div>
 
-            <div>
-              <span className="field-label">
-                Confidence
-              </span>
-              <strong className="confidence-value">
-                {formatConfidence(
-                  diagnosis.confidence,
-                )}
-              </strong>
-            </div>
           </div>
 
           <div className="diagnosis-section">
@@ -191,11 +181,15 @@ function DiagnosisPanel({
 }
 
 interface EvidencePanelProps {
+  incidentId: string
+  runId?: string
   evidence: EvidenceItem[]
   referencedIds: readonly string[]
 }
 
 function EvidencePanel({
+  incidentId,
+  runId,
   evidence,
   referencedIds,
 }: EvidencePanelProps) {
@@ -291,18 +285,7 @@ function EvidencePanel({
                   </p>
                 )}
 
-                <details className="structured-data">
-                  <summary>
-                    Inspect structured data
-                  </summary>
-                  <pre>
-                    {JSON.stringify(
-                      item.data,
-                      null,
-                      2,
-                    )}
-                  </pre>
-                </details>
+                <EvidenceBody key={`${runId ?? 'legacy'}:${item.evidence_id}`} item={item} incidentId={incidentId} runId={runId} />
               </article>
             )
           })}
@@ -473,10 +456,12 @@ function RunbookPanel({
 
 interface IncidentAnalysisProps {
   incident: IncidentStatusResponse
+  section?: 'all' | 'diagnosis' | 'evidence' | 'plan'
 }
 
 export function IncidentAnalysis({
   incident,
+  section = 'all',
 }: IncidentAnalysisProps) {
   const availableEvidenceIds = new Set(
     incident.evidence.map(
@@ -501,7 +486,7 @@ export function IncidentAnalysis({
 
   return (
     <div className="analysis-stack">
-      <DiagnosisPanel
+      {(section === 'all' || section === 'diagnosis') && <DiagnosisPanel
         diagnosis={incident.diagnosis}
         llmModel={incident.llm_model}
         availableEvidenceIds={
@@ -510,9 +495,11 @@ export function IncidentAnalysis({
         availableRunbookIds={
           availableRunbookIds
         }
-      />
+      />}
 
-      <EvidencePanel
+      {(section === 'all' || section === 'evidence') && <><EvidencePanel
+        incidentId={incident.incident_id}
+        runId={incident.run?.run_id ?? 'legacy'}
         evidence={incident.evidence}
         referencedIds={diagnosisEvidenceIds}
       />
@@ -522,7 +509,8 @@ export function IncidentAnalysis({
         referencedIds={diagnosisRunbookIds}
         retrievalQuery={incident.retrieval_query}
       />
-      <RemediationPlanPanel incident={incident} />
+      </>}
+      {(section === 'all' || section === 'plan') && <RemediationPlanPanel incident={incident} />}
     </div>
   )
 }

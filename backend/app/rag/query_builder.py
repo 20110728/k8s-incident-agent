@@ -22,7 +22,18 @@ MAX_QUERY_CHARACTERS = 8000
 
 def build_retrieval_query(
     state: IncidentState,
+    *, compact: bool = False, unbounded: bool = False,
 ) -> str:
+    if compact:
+        from backend.app.investigation.compact import evidence_text
+        request = state.get("request", {})
+        parts = [f"{request.get('namespace', '')}/{request.get('service_name', '')}",
+                 str(request.get("description", ""))[:250]]
+        for item in sorted(state.get("evidence", []), key=lambda e: e.get("resource_type") != "BusinessCheck"):
+            if item.get("resource_type") in {"BusinessCheck", "PodStatus", "Deployment", "Service", "PodLogs"}:
+                parts.append(str(item["resource_type"]) + ": " + evidence_text(item)[:260])
+        # Bound UTF-8 bytes too: the embedding ledger uses bytes + 512.
+        return "\n".join(parts).encode("utf-8")[:2400].decode("utf-8", errors="ignore")
     request = state.get("request", {})
     description = request.get("description", "")
 
@@ -48,7 +59,7 @@ def build_retrieval_query(
             default=str,
         )
 
-        if len(serialized) > MAX_ITEM_CHARACTERS:
+        if not unbounded and len(serialized) > MAX_ITEM_CHARACTERS:
             serialized = (
                 serialized[:MAX_ITEM_CHARACTERS]
                 + "...[truncated]"
@@ -64,4 +75,4 @@ def build_retrieval_query(
 
     query = "\n".join(parts)
 
-    return query[:MAX_QUERY_CHARACTERS]
+    return query if unbounded else query[:MAX_QUERY_CHARACTERS]
