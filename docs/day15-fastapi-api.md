@@ -1,5 +1,7 @@
 # Day 15：FastAPI 基础、API 契约和应用服务层
 
+> 历史阶段记录：保留当时设计、命令和结果，不代表当前多轮功能状态。当前入口见 [README](../README.md) 与 [收尾核对](acceptance/closeout-audit.md)（2026-10-12）。
+
 ## 完成内容
 
 Day 15 在已有 LangGraph 工作流之外增加了 HTTP API 边界，

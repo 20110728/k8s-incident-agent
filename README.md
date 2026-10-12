@@ -2,9 +2,9 @@
 
 面向将业务部署到 Kubernetes 后需要排障的开发者，提供可追溯的诊断、人工审批后的受控修复，以及资源和登记业务接口的恢复检查。
 
-项目采用 **预定义 LangGraph Workflow**：模型负责解释证据和提出结构化诊断、计划，程序负责校验事实、限制动作和控制执行。目标是在有限场景中完成可审计的排障闭环，并明确证据不足时不能得出的结论。
+项目采用 LangGraph 持久化工作流与有界多轮调查：模型选择取证、追问、诊断和修复候选；程序负责计算事实、校验引用与权限、生成固定修复参数并控制审批执行。
 
-**当前状态：v0.2 阶段存档（恢复闭环与人工处理后只读复查）。** selector、readiness 的真实修复及 Recovery verification 已获维护者验收；人工调查事件复查、后端重启后复查记录仍存在也已获验收。页面复查交互、真实受限 Kubernetes 身份验收和同批案例的模型指标对比尚未完成。Python 包/API 版本仍为 `0.1.0`，本存档不标记完整 `v0.2.0` 发布。
+**当前状态：2026-10-12，核心功能进入收尾验收，尚未声明新正式版本发布。** 多轮 selector 已获维护者反馈完成诊断、审批、执行及连续 3/3 资源与业务观察；dependency 实际调用记录已验证关键日志入模及保守诊断。当前多轮 readiness 最后一次受控修复正在验收，独立恢复导出及最新回归尚待 ECS 反馈。历史单轮 readiness 通过不代替本轮验收。Python 包/API 版本仍为 `0.1.0`。
 
 ## 项目概览
 
@@ -33,11 +33,13 @@
 
 ## 工作流与系统结构
 
-请求校验 → 采集 → Runbook 检索 → 诊断与校验 → 规划与校验 → 人工审批 → 执行前现场复核 → 固定工具写入 → 资源恢复检查 → 重新采集并验证登记业务。
+请求持久化并返回 ID → worker 领取任务 → 基线采集与 Runbook 检索 → 按需补采/追问/诊断 → 引用及语义校验 → 程序生成受控计划 → 人工审批 → 现场复核与操作账本 → 固定工具写入 → 资源及登记业务连续观察。
+
+新调查最多 5 轮决策（追问占轮次）、6 次模型调用（含失败和纠正）；不设置累计 Token、总时间或工具总次数额度。保留单次网络超时和独立恢复观察窗口。旧单轮兼容路径仍保留。
 
 证据不足和未发现故障的诊断跳过规划；人工调查计划结束自动处置流程。人工处理后通过独立复查接口观察当前状态，不恢复旧审批、不重放写操作，也不覆盖原诊断或原 Recovery verification。
 
-Compose 运行数据库、后端和 Web 页面。后端通过 Kubernetes API 读取集群，并通过 API Service proxy 访问专用业务检查器；检查器在集群内解析登记 Service DNS、核对 ClusterIP，再通过该 Service 发出业务请求。因此后端无需直接解析集群 DNS，业务检查也不使用业务 Service 的 port-forward 代替真实 Service 转发路径。
+Compose 运行数据库、后端、独立 worker（worker profile）和 Web 页面。后端通过 Kubernetes API 读取集群，并通过 API Service proxy 访问专用业务检查器；检查器在集群内解析登记 Service DNS、核对 ClusterIP，再通过该 Service 发出业务请求。因此后端无需直接解析集群 DNS，业务检查也不使用业务 Service 的 port-forward 代替真实 Service 转发路径。
 
 ## 校验职责与执行边界
 
@@ -60,15 +62,15 @@ Compose 运行数据库、后端和 Web 页面。后端通过 Kubernetes API 读
 - Agent 不执行任意 Shell、任意补丁或任意 URL 调查；故障注入脚本由操作者运行，不属于 Agent 工具集。
 - profile 与应用版本、镜像声明匹配不等于镜像签名或内容可信证明；`matched` 也不表示服务健康。
 - readiness 失败可能来自依赖故障，不直接等同于探针配置错误；业务失败不能通过放宽探针掩盖。
-- 尚未完成真实受限 ServiceAccount 的越界验收、登录认证和审批角色授权；当前定位为受控单人演示，认证与角色授权安排在多人试用前补充。
-- 现有乐观冲突检查不是跨资源事务，也不证明完整并发执行互斥或 exactly-once；Service 完整身份绑定等仍有改进空间。
+- 目标身份绑定与受限身份验收已有阶段 3 实现及维护者历史通过记录；登录认证和审批角色授权仍未完成，当前定位为受控单人演示。
+- 租约、资源 UID/版本、审批绑定及操作账本用于控制执行与恢复；外部写结果不确定时先核对，不宣称跨数据库与 Kubernetes 的 exactly-once。
 - 不宣称支持完整多租户、多集群或自主开放式调查。
 
 ## 恢复检查究竟验证了什么
 
-资源恢复检查默认在 60 秒预算内轮询，不满足条件时约每 2 秒再观察，首次成功即结束；API 异常不是持续重试条件，外部调用耗时也可能令实际总耗时超过该预算。资源检查通过后，重新采集一次资源和登记业务证据。
+恢复使用 `recovery-window-v1`，默认要求连续 3 次资源与登记业务采样通过，资源/业务/总窗口分别保留 60/30/120 秒限制。重启重新计算连续次数，不延长原截止时间。已有单次复查、稳定性观察与持久化延时复查能力。
 
-**当前没有连续多轮业务成功判定，也没有延时稳定性复查。** 手动重复复查会产生多条独立记录，不等于后台调度的多轮验证。`passed` 仅说明本次登记范围通过，不覆盖所有副本、集群外入口、未登记接口或长期稳定性。
+通过仅覆盖登记资源与业务采样，不代表所有副本、集群外入口或持续可用性。selector 资源检查直接核对批准 selector 与就绪端点，副本统计字段为空不表示失败。
 
 Deployment 修改 Pod 模板后，会逐步创建新 Pod 并退出旧 Pod。旧 Pod 尚未删除，不代表它仍接收新流量。恢复判定只在严格匹配的 EndpointSlice 记录明确满足 `terminating=true / ready=false / serving=false` 等条件时，从判定视图排除对应旧 Pod；原始证据保留，最终删除仍列入未验证范围。不能简单忽略所有 NotReady 或 Terminating Pod。
 
@@ -81,7 +83,7 @@ python -m scripts.recheck_incident --incident-id YOUR_INCIDENT_ID --history
 
 POST `/api/v1/incidents/{incident_id}/rechecks` 触发采集，GET 同一路径读取独立历史。复查不调用模型、不修改 Kubernetes；原事件状态不变。`status` 为 `passed / failed / unknown`，`target_comparison` 单独说明登记摘要、Deployment UID/generation 是否变化，`recovery_attribution=not_established` 不建立修复因果归属。人工备注为未验证说明，不作为诊断事实或已认证身份。
 
-等待审批或执行中的事件拒绝复查。重复 POST 创建不同记录，不具备请求幂等性；请求失败后应先读历史，避免自动重复提交。当前 Web 尚无复查入口，使用 API/CLI；下一阶段补齐页面交互。接口及验收命令见 [只读复查说明](docs/stage2-readonly-rechecks.md)。
+页面已支持“重新检查”“观察稳定性”及历史查看。旧独立复查 API/CLI 继续兼容，其请求语义不能与页面控制接口混同。历史接口见 [只读复查说明](docs/stage2-readonly-rechecks.md)，当前页面与观察机制见 [4C](docs/acceptance/4C-workbench.md)、[5A](docs/acceptance/5A-observation.md)、[5B](docs/acceptance/5B-delayed-recheck.md)。
 
 ## 环境与启动
 
@@ -127,7 +129,7 @@ bash scripts/compose_up.sh
 
 服务配置记录 `owner` 与 `config_source`。现场修复后仍需同步修改配置仓库，避免下次发布覆盖现场修复；自动同步配置仓库未实现。修改登记配置或重建 Service 导致 ClusterIP 改变后，需要重新运行 `scripts/business_probe_up.sh` 更新检查器登记目标。
 
-仅修改已挂载的后端 Python 通常只需重启 backend；依赖变化需重建后端镜像。前端源码未挂载，修改前端需单独构建。已有环境本次无需重新部署 Demo 或重建前端。
+后端/调查逻辑或模型环境变量变更需同时更新 backend 与 worker，入口为 `bash scripts/deploy_stage6b2b_backend.sh`，先等待活动任务结束。前端单独构建，Demo 仅在应用变更时重部署。文档和本地导出 CLI 更新无需重启服务。
 
 ## 检查与固定案例
 
@@ -187,24 +189,20 @@ python -m scripts.run_fault_case --case wrong_content --source replay --mode age
 
 每次结果写到独立的 `evals/results/stage5/` 子目录，包含 `input.json`、`output-state.json`、`result.json`。记录来源、输入摘要、断言、实际耗时及模型报告的 Token；没有模型用量时不补造数字。`rule_precheck` 表示本地规则生成诊断，不能算作模型成功；该标识也不能证明上游检索没有产生 Embedding 用量。
 
-## 验收范围与下一步
+## 收尾验收与排障导出
 
-| 层级 | 当前记录 | 不能据此推导 |
-| --- | --- | --- |
-| 合成程序回归 | 固定案例已通过；后续定向测试分别为 183、117、50 项通过，各批有重叠，不累加为总数 | 真实模型准确率或真实写入权限安全 |
-| 真实集群 facts | 维护者已反馈七个场景通过 | 模型诊断、规划或自动修复通过 |
-| 真实模型 / 写操作 | selector、readiness 的真实修复及 Recovery verification 已反馈通过 | 全案例模型稳定或统计意义上的低误报率 |
-| 人工复查与持久化 | 维护者已反馈原人工调查事件复查通过、重启后记录仍存在 | 页面交互完成、并发与故障注入全部通过 |
-| 本次文档存档 | 文档、注释和局部格式整理；Python AST 等价及补丁应用检查 | 新增业务能力或重跑全部历史验收 |
+当前核心回归在 ECS 运行 `bash scripts/accept_stage6bc2.sh`，使用受控模型/集群和真实隔离 PostgreSQL，不等同于真实模型效果。早期通过情况来自维护者历史反馈，不代表本提交重跑过全部测试。
 
-历史实测结果是维护者反馈；本存档不包含新的真实集群/真实模型测量，也不公开运行环境中的原始诊断数据。不要将不同测试层级混为同一“通过率”。
+- 已有真实反馈：多轮 selector 审批修复与连续观察；dependency 日志取证及保守诊断。
+- 待最后反馈：当前多轮 readiness 修复、恢复审计导出及最新回归结果。
+- 后续范围：完整 unknown 报告增强、检索优化、复杂场景公平对照和效果统计，不继续扩展为本次必做功能。
 
-后续按单阶段验收推进：
+```bash
+python -m scripts.export_investigation_debug --incident-id YOUR_INCIDENT_ID --brief
+python -m scripts.export_investigation_debug --incident-id YOUR_INCIDENT_ID --last-llm
+python -m scripts.export_remediation_debug --incident-id YOUR_INCIDENT_ID
+```
 
-1. **未实现：页面复查闭环。** 展示负责人、配置来源、人工说明、复查历史、目标变化和未验证范围，区分旧事件与新观察。
-2. **部分完成：校验反馈与边界收敛。** 聚合可同时发现的错误、优化上下文与预算；完善目标身份和并发冲突边界，保留执行前现场复核。
-3. **待验收：真实受限 Kubernetes 身份。** 使用实际受限身份验证越界读取/写入拦截；认证、审批角色授权在多人试用前补齐。
-4. **未实现：公平的规则/Agent 对比基线与有界只读调查。** 先固定同批输入及计分规则，再增加工具白名单、调用/Token/时间预算和停止条件，让模型按缺失证据选择下一步只读采集；写入仍走既有校验和审批。
-5. **未完成：分层实测对比。** 分别报告合成回放、真实 facts、真实模型和真实写操作，记录判断准确性、错误修复建议、业务恢复误报、耗时和实际 Token。当前不填造指标。
+可用 `--run-id` 指定历史诊断轮次。恢复导出单独写入 `evals/results/remediation-debug/`，包含保存的计划、审批、实际 patch、执行与复查记录，不重新调用模型或集群。详见 [恢复导出验收](docs/acceptance/remediation-export.md)。
 
-存档和推送步骤见 [Git 提交与阶段存档](docs/GIT_PUBLISH.md)。
+待 readiness 和最后回归确认后固定发布提交、归档演示与未覆盖范围；不填写未经测量的准确率或成本降幅。[收尾材料核对](docs/acceptance/closeout-audit.md) 记录当前入口与历史材料保留原因。
