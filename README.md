@@ -1,95 +1,48 @@
 # K8s Incident Agent
 
-面向将业务部署到 Kubernetes 后需要排障的开发者，提供可追溯的诊断、人工审批后的受控修复，以及资源和登记业务接口的恢复检查。
+面向 Kubernetes 应用的故障调查与受控恢复系统。围绕一个登记 Service 采集现场证据，由模型选择补采、追问或形成诊断；通过程序校验后生成修复计划，经人工审批执行，并重新验证资源与业务状态。
 
-项目采用 LangGraph 持久化工作流与有界多轮调查：模型选择取证、追问、诊断和修复候选；程序负责计算事实、校验引用与权限、生成固定修复参数并控制审批执行。
+**项目状态：本轮开发与验收已由维护者于 2026-10-12 确认收尾。** 当前定位为部署在 ECS + kind 环境中的单人排障演示项目。包/API 版本仍为 `0.1.0`，阶段收尾不自动变更版本号。
 
-**当前状态：2026-10-12，核心功能进入收尾验收，尚未声明新正式版本发布。** 多轮 selector 已获维护者反馈完成诊断、审批、执行及连续 3/3 资源与业务观察；dependency 实际调用记录已验证关键日志入模及保守诊断。当前多轮 readiness 最后一次受控修复正在验收，独立恢复导出及最新回归尚待 ECS 反馈。历史单轮 readiness 通过不代替本轮验收。Python 包/API 版本仍为 `0.1.0`。
+## 核心能力
 
-## 项目概览
-
-| 项目 | 内容 |
+| 能力 | 实现 |
 | --- | --- |
-| 使用场景 | Kubernetes 应用发布、配置漂移及运行异常的辅助排查 |
-| 技术栈 | Python / FastAPI、LangGraph、PostgreSQL / pgvector、React / TypeScript |
-| 开发与演示环境 | 阿里云 ECS、VS Code SSH、Docker Compose、kind |
-| 演示业务 | `agent-demo/order-service`，登记期望 2 个副本，独立模拟下游 |
-| 只读能力 | 资源、事件、日志与登记业务检查采集；Runbook 检索；结构化诊断 |
-| 受控写能力 | 登记 Service selector、readiness HTTP 探针 path/port；必须通过程序校验和人工审批 |
-| 审计与复查 | 检查点、审批/执行记录、处置后证据、逐次模型调用调试记录、独立只读复查历史 |
+| 多轮调查 | 最多 5 轮决策、6 次模型调用；按缺失事实选择白名单只读工具，支持人工追问和同事件新轮次 |
+| 证据与诊断 | 资源、事件、日志和登记业务检查；Runbook 检索；症状、根因假设、引用及未验证范围 |
+| 可靠运行 | PostgreSQL 持久化任务、独立 worker、租约与 LangGraph 检查点；等待用户和审批时保存进度 |
+| 受控修复 | 仅登记 Service selector 和 Deployment 指定容器 readiness HTTP path/port；程序生成参数，人工审批后执行 |
+| 执行保护 | 绑定计划、证据与目标身份；执行前核对 UID、配置和版本；操作账本记录外部写入，结果不确定时先核对 |
+| 恢复与复查 | 资源及登记业务连续观察、人工处理后的单次复查、稳定性观察与延时复查；保留历史 |
+| 排障导出 | 调查摘要、最后一次模型输入输出、独立恢复计划/审批/执行/复查审计 |
 
-## 相比此前版本的改动
+技术栈：Python / FastAPI、LangGraph、PostgreSQL / pgvector、React / TypeScript、Docker Compose、Kubernetes。
 
-| 范围 | 已实现改动 | 价值 |
-| --- | --- | --- |
-| Day21 → v0.2 基础 | 版本化 service profile、订单 Demo、集群内登记业务检查、十个固定案例 | 从单纯资源排障扩展到应用与业务状态的联合判断 |
-| 恢复闭环 | 处置后重新采集资源与业务检查，保存 `post_repair_evidence`、`unverified_scope` | 不以工具写入成功或 Pod Ready 代替业务恢复验收 |
-| 恢复边界 | 登记副本数；区分探针配置匹配、漂移和未知；严格识别退出中的旧 Pod | 减少副本不足和配置偏差漏判，避免旧故障 Pod 退出期间误报 |
-| 诊断校验反馈 | 动态 `output_contract`；已支持配置假设必须引用相应配置证据；失败进入已有有限重试 | 在诊断阶段暴露依据缺失，避免到规划阶段才退成人工调查 |
-| 模型可观测性 | `llm_debug` 记录调用原文、解析结果、错误、反馈、耗时和实际用量；页面复制/下载完整事件 JSON | 区分生成错误、解析错误、校验失败与模型调用成本 |
-| 人工处理后复查 | 新增只读复查 API、CLI、独立 PostgreSQL 记录和分页历史 | 验证人工处理后的当前状态，保留原始事件历史，不把恢复归功于 Agent |
+## 工作流程
 
-详细变更与验收范围见 [CHANGELOG.md](CHANGELOG.md)，阅读入口见 [代码阅读指南](docs/CODE_READING.md)。
-
-## 工作流与系统结构
-
-请求持久化并返回 ID → worker 领取任务 → 基线采集与 Runbook 检索 → 按需补采/追问/诊断 → 引用及语义校验 → 程序生成受控计划 → 人工审批 → 现场复核与操作账本 → 固定工具写入 → 资源及登记业务连续观察。
-
-新调查最多 5 轮决策（追问占轮次）、6 次模型调用（含失败和纠正）；不设置累计 Token、总时间或工具总次数额度。保留单次网络超时和独立恢复观察窗口。旧单轮兼容路径仍保留。
-
-证据不足和未发现故障的诊断跳过规划；人工调查计划结束自动处置流程。人工处理后通过独立复查接口观察当前状态，不恢复旧审批、不重放写操作，也不覆盖原诊断或原 Recovery verification。
-
-Compose 运行数据库、后端、独立 worker（worker profile）和 Web 页面。后端通过 Kubernetes API 读取集群，并通过 API Service proxy 访问专用业务检查器；检查器在集群内解析登记 Service DNS、核对 ClusterIP，再通过该 Service 发出业务请求。因此后端无需直接解析集群 DNS，业务检查也不使用业务 Service 的 port-forward 代替真实 Service 转发路径。
-
-## 校验职责与执行边界
-
-| 层次 | 校验对象与目的 | 失败行为及主要代码 |
-| --- | --- | --- |
-| JSON / Schema | 请求和模型输出的字段、类型、枚举及结构 | 拒绝非法请求；模型输出按已有重试预算处理，耗尽后失败。`schemas/`、`agent/schemas.py`、`llm/` |
-| 证据引用 | Evidence / Runbook 引用有效性，以及配置假设是否引用必需配置证据 | 给出诊断反馈，拒绝无依据的配置假设。`agent/diagnosis_policy.py`、`nodes.py` |
-| 事实一致性 | 资源状态、业务结果、探针配置与模型断言是否相容 | 拒绝矛盾输出；特定证据不足场景由规则保守报告未知。`diagnosis_policy.py` |
-| 动作授权 | 登记对象、允许动作、参数、配置依据和计划一致性 | 不生成可执行授权或阻止执行。`remediation_policy.py`、`execution_policy.py` |
-| 审批绑定 | 将审批绑定到事件、计划、配置、诊断和证据快照 | 旧审批不能授权变更后的计划。`agent/approval.py` |
-| 现场变化与冲突 | 执行前重新读取 profile 和 Deployment 身份/版本；写入时比较旧值和 resourceVersion | 拒绝不匹配或冲突，不静默覆盖。`service_profiles/registry.py`、`tools/remediation_tools.py` |
-| 恢复与只读复查 | 新采集资源、登记业务和覆盖范围 | 明确失败/未知和未验证项，不沿用旧成功。`business_recovery.py`、`services/recheck_service.py` |
-
-以上代码路径除显式目录外均相对于 `backend/app/`。审批前检查不能替代执行前现场复核：两次检查之间可能发生发布或人工修改。应用层 PATCH 参数限制也不能替代 Kubernetes RBAC；RBAC 的资源权限不等于字段级授权。
-
-提示词负责说明输出契约；确定性规则负责状态计算与执行门槛；受控报告仅覆盖已实现的部分业务失败说明。不会因模型漏填而自动补写无依据结论。并非所有诊断正文均由程序生成，也尚未完成所有校验错误的统一聚合；部分失败仍可能逐轮暴露。
-
-当前边界：
-
-- Agent 不执行任意 Shell、任意补丁或任意 URL 调查；故障注入脚本由操作者运行，不属于 Agent 工具集。
-- profile 与应用版本、镜像声明匹配不等于镜像签名或内容可信证明；`matched` 也不表示服务健康。
-- readiness 失败可能来自依赖故障，不直接等同于探针配置错误；业务失败不能通过放宽探针掩盖。
-- 目标身份绑定与受限身份验收已有阶段 3 实现及维护者历史通过记录；登录认证和审批角色授权仍未完成，当前定位为受控单人演示。
-- 租约、资源 UID/版本、审批绑定及操作账本用于控制执行与恢复；外部写结果不确定时先核对，不宣称跨数据库与 Kubernetes 的 exactly-once。
-- 不宣称支持完整多租户、多集群或自主开放式调查。
-
-## 恢复检查究竟验证了什么
-
-恢复使用 `recovery-window-v1`，默认要求连续 3 次资源与登记业务采样通过，资源/业务/总窗口分别保留 60/30/120 秒限制。重启重新计算连续次数，不延长原截止时间。已有单次复查、稳定性观察与持久化延时复查能力。
-
-通过仅覆盖登记资源与业务采样，不代表所有副本、集群外入口或持续可用性。selector 资源检查直接核对批准 selector 与就绪端点，副本统计字段为空不表示失败。
-
-Deployment 修改 Pod 模板后，会逐步创建新 Pod 并退出旧 Pod。旧 Pod 尚未删除，不代表它仍接收新流量。恢复判定只在严格匹配的 EndpointSlice 记录明确满足 `terminating=true / ready=false / serving=false` 等条件时，从判定视图排除对应旧 Pod；原始证据保留，最终删除仍列入未验证范围。不能简单忽略所有 NotReady 或 Terminating Pod。
-
-## 人工处理后的只读复查
-
-```bash
-python -m scripts.recheck_incident --incident-id YOUR_INCIDENT_ID --note '人工处理后复查' --expect passed
-python -m scripts.recheck_incident --incident-id YOUR_INCIDENT_ID --history
+```mermaid
+flowchart LR
+    A[创建事件并持久化] --> B[Worker 采集基线与检索]
+    B --> C[模型选择调查行动]
+    C --> D[只读补采或人工追问]
+    D --> C
+    C --> E[诊断与程序校验]
+    E --> F[报告或人工交接]
+    E --> G[程序生成受控计划]
+    G --> H[人工审批与现场复核]
+    H --> I[执行并记录操作]
+    I --> J[资源与业务连续验证]
 ```
 
-POST `/api/v1/incidents/{incident_id}/rechecks` 触发采集，GET 同一路径读取独立历史。复查不调用模型、不修改 Kubernetes；原事件状态不变。`status` 为 `passed / failed / unknown`，`target_comparison` 单独说明登记摘要、Deployment UID/generation 是否变化，`recovery_attribution=not_established` 不建立修复因果归属。人工备注为未验证说明，不作为诊断事实或已认证身份。
+模型选择修复候选，程序从登记配置生成实际参数。引用、事实或权限不符合要求时拒绝继续；允许纠正的错误使用已有纠正机会，仍不合格时保守结束。部分纯诊断语义失败可生成程序证据报告，但不会因此获得写权限。
 
-页面已支持“重新检查”“观察稳定性”及历史查看。旧独立复查 API/CLI 继续兼容，其请求语义不能与页面控制接口混同。历史接口见 [只读复查说明](docs/stage2-readonly-rechecks.md)，当前页面与观察机制见 [4C](docs/acceptance/4C-workbench.md)、[5A](docs/acceptance/5A-observation.md)、[5B](docs/acceptance/5B-delayed-recheck.md)。
+日志每次请求最近 1000 行、单份最多 256 KiB。保存原始采样；模型输入使用原生 JSON，并对可精确识别的重复探针访问日志保留次数、时间和行定位，异常日志保留原文。浏览器预览与完整正文按需读取分开。
 
-## 环境与启动
+调查保留调用次数限制和用量记账，不设置累计 Token、总时间或工具总次数额度。单次网络超时和恢复观察窗口独立保留。
 
-适用环境：Linux 云服务器、Python 3.12、Docker Compose、kubectl、kind；通过 VS Code SSH 开发。以下命令在仓库根目录执行。已有验收环境不必重新安装或重建集群。
+## 运行
 
-首次准备 Python 环境：
+环境：Linux/ECS、Python 3.12、Docker Compose、kubectl、kind。以下命令在项目根目录执行；已有环境无需重建集群或覆盖 `.env`。
 
 ```bash
 python3.12 -m venv .venv
@@ -97,105 +50,50 @@ source .venv/bin/activate
 python -m pip install -e . pytest
 ```
 
-首次使用时从 `.env.example` 复制 `.env`，填写 PostgreSQL、模型和 Embedding 配置。主要设置为 `PGVECTOR_URL`、`DASHSCOPE_API_KEY`、`DASHSCOPE_BASE_URL`、`LLM_MODEL`、`EMBEDDING_MODEL` 和 `KUBERNETES_CONTEXT`。实际默认值以 `backend/app/rag/settings.py` 为准。不要覆盖现有 `.env`。
+首次从 `.env.example` 创建 `.env`，配置数据库、模型、Embedding 和 Kubernetes 访问。启用当前多轮后台工作流需要：
 
-本项目演示脚本固定使用 `kind-incident-agent`，对应 kind 集群名 `incident-agent`。没有该集群时创建：
-
-```bash
-kind create cluster --name incident-agent
+```dotenv
+INCIDENT_AGENT_EXECUTION_MODE=queued
+INCIDENT_AGENT_INVESTIGATION_ENABLED=true
 ```
 
-首次部署或明确需要重建演示应用时执行：
+示例文件保留兼容默认值，不能只复制后就假定多轮已开启。首次准备 Demo 与服务：
 
 ```bash
+# 仅在集群不存在时创建
+kind create cluster --name incident-agent
 bash scripts/demo_v02.sh deploy
 bash scripts/business_probe_up.sh
 bash scripts/compose_up.sh
+bash scripts/deploy_stage6b2b_backend.sh
 ```
 
-`compose_up.sh` 会检查环境、创建或复用外部 PostgreSQL 卷、构建应用镜像，并在没有 Runbook 向量时建立索引。默认外部卷名为 `postgres_incident-agent-postgres`。已有数据卷会复用。
+演示目标为 `agent-demo/order-service`，登记配置见 [service profile](config/service-profiles/agent-demo.order-service.json)。业务检查器从集群内访问登记 Service，核对 HTTP 状态及响应内容。页面：`http://127.0.0.1:8080`；后端就绪检查：`http://127.0.0.1:8000/readyz`。
 
-页面地址为服务器本机 `http://127.0.0.1:8080`，后端就绪检查为 `http://127.0.0.1:8000/readyz`。可使用 VS Code SSH 端口转发在开发机访问页面。
+修改模型环境变量或后端逻辑后，等待活动任务结束，再运行 `bash scripts/deploy_stage6b2b_backend.sh` 更新 backend 与 worker。修改 Demo 才需要重新部署演示应用；前端变更单独构建。仅文档或本地导出脚本更新无需重启服务。
 
-## 服务配置与演示接口
+## 演示与验收
 
-登记文件：`config/service-profiles/agent-demo.order-service.json`。当前配置修订号为 3，期望副本数为 2，关联 `agent-demo/order-service` Deployment 与同名 Service，应用版本为 `order-demo-v0.2.0`，镜像为 `k8s-incident-demo:0.2.0`。
-
-| 路径 | 用途 |
-| --- | --- |
-| `/livez` | 存活检查，不以模拟下游可用作为存活条件 |
-| `/readyz` | 就绪检查，依赖模拟下游可用 |
-| `/api/orders/demo-001` | 登记业务接口，预期 HTTP 200，订单 ID、确认状态和依赖状态匹配 |
-
-服务配置记录 `owner` 与 `config_source`。现场修复后仍需同步修改配置仓库，避免下次发布覆盖现场修复；自动同步配置仓库未实现。修改登记配置或重建 Service 导致 ClusterIP 改变后，需要重新运行 `scripts/business_probe_up.sh` 更新检查器登记目标。
-
-后端/调查逻辑或模型环境变量变更需同时更新 backend 与 worker，入口为 `bash scripts/deploy_stage6b2b_backend.sh`，先等待活动任务结束。前端单独构建，Demo 仅在应用变更时重部署。文档和本地导出 CLI 更新无需重启服务。
-
-## 检查与固定案例
-
-只读检查当前服务：
-
-```bash
-python -m scripts.check_service_profile
-python -m scripts.check_business_service --expect passed
-python -m scripts.check_diagnosis_policy --llm --expect-resource ready --expect-business passed
-```
-
-最后一条调用真实诊断模型；前提是当前 Demo 正常。`check_diagnosis_policy` 不执行处置计划。
-
-第五阶段程序回归：
-
-```bash
-python -m pytest backend/tests/fault_cases -q
-```
-
-该阶段登记的回归预期为 **16 passed**；本次文档存档未重新执行这组历史测试。十个案例的输入、预期和特殊断言在 `evals/cases/v02-stage5/catalog.json`；回归使用合成 Evidence 和固定模型响应，不能作为模型准确率数据。
-
-真实集群事实批测（会由操作者脚本修改 Demo）：
-
-```bash
-bash scripts/run_stage5_live.sh
-```
-
-预期七个 `PASS ... (live facts only)`，随后恢复正常并通过恢复后的事实检查。批测不调用诊断/规划模型，也不执行 Agent 审批流程。必要时单独恢复：
+故障由操作者注入，权限与 Agent 分开。每次先 reset，再选择一个场景：
 
 ```bash
 bash scripts/stage5_fault.sh reset
+bash scripts/stage5_fault.sh selector_mismatch
+# 其他场景：readiness_path_error、dependency_unavailable
 ```
 
-| 案例 ID | 输入方式 | 预期资源 / 业务 |
-| --- | --- | --- |
-| `normal` | 真实集群 / 回放 | ready / passed |
-| `selector_mismatch` | 真实集群 / 回放 | not_ready / unknown |
-| `readiness_path_error` | 真实集群 / 回放 | not_ready / passed |
-| `dependency_unavailable` | 真实集群 / 回放 | not_ready / unknown |
-| `api500` | 真实集群 / 回放 | ready / failed |
-| `wrong_content` | 真实集群 / 回放 | ready / failed |
-| `historical_recovered` | 合成回放 | ready / passed |
-| `evidence_missing` | 真实集群 / 回放 | ready / unknown |
-| `log_instruction` | 合成回放 | not_ready / unknown |
-| `changed_after_approval` | 合成回放 | not_ready / unknown；写入前冲突拦截 |
+在页面创建 `agent-demo/order-service` 事件，描述故障现象，不把脚本标签或正确答案写入事件。selector/readiness 配置漂移可提出审批计划；依赖故障提供证据和待验证判断，不自动扩缩容、重启依赖或放宽探针。
 
-探针路径错误的真实场景保留旧就绪副本服务流量，因此固定预期为资源未就绪、业务通过；不能强行要求两项状态一致。
-
-按需执行单个案例：
+恢复窗口默认要求连续 3 次资源与登记业务采样通过。资源 ready、业务 passed 与工具执行成功分别记录；通过仅覆盖本次登记采样范围。selector 复查中的副本统计为空不表示失败，它直接核对批准 selector 和就绪端点。
 
 ```bash
-python -m scripts.run_fault_case --case changed_after_approval --source replay --mode regression
-python -m scripts.run_fault_case --case wrong_content --source replay --mode agent
+# 在 ECS 虚拟环境中运行，使用真实隔离 PostgreSQL、受控模型/集群
+bash scripts/accept_stage6bc2.sh
 ```
 
-`--mode facts` 只检查事实；`regression` 使用固定响应检验程序；`agent` 使用真实诊断及适用时的规划模型，但不执行真实审批和资源修改。`agent` 回放使用冻结 Runbook，不评估实时检索。模型调用可能产生费用。
+该脚本验证程序行为，不代表真实模型准确率；更早的恢复、并发和权限验收入口继续保留。阶段收尾依据维护者验收确认与分块记录，不发布未经测量的准确率、成本降幅或生产稳定性指标。
 
-每次结果写到独立的 `evals/results/stage5/` 子目录，包含 `input.json`、`output-state.json`、`result.json`。记录来源、输入摘要、断言、实际耗时及模型报告的 Token；没有模型用量时不补造数字。`rule_precheck` 表示本地规则生成诊断，不能算作模型成功；该标识也不能证明上游检索没有产生 Embedding 用量。
-
-## 收尾验收与排障导出
-
-当前核心回归在 ECS 运行 `bash scripts/accept_stage6bc2.sh`，使用受控模型/集群和真实隔离 PostgreSQL，不等同于真实模型效果。早期通过情况来自维护者历史反馈，不代表本提交重跑过全部测试。
-
-- 已有真实反馈：多轮 selector 审批修复与连续观察；dependency 日志取证及保守诊断。
-- 待最后反馈：当前多轮 readiness 修复、恢复审计导出及最新回归结果。
-- 后续范围：完整 unknown 报告增强、检索优化、复杂场景公平对照和效果统计，不继续扩展为本次必做功能。
+## 独立排障导出
 
 ```bash
 python -m scripts.export_investigation_debug --incident-id YOUR_INCIDENT_ID --brief
@@ -203,6 +101,14 @@ python -m scripts.export_investigation_debug --incident-id YOUR_INCIDENT_ID --la
 python -m scripts.export_remediation_debug --incident-id YOUR_INCIDENT_ID
 ```
 
-可用 `--run-id` 指定历史诊断轮次。恢复导出单独写入 `evals/results/remediation-debug/`，包含保存的计划、审批、实际 patch、执行与复查记录，不重新调用模型或集群。详见 [恢复导出验收](docs/acceptance/remediation-export.md)。
+可加 `--run-id` 指定历史诊断轮次。调查文件保存到 `evals/results/investigation-debug/`；恢复文件保存到 `evals/results/remediation-debug/`，包括计划、审批、实际 patch、操作快照和已保存复查结果。导出只读取保存记录，不重新调用模型或操作集群，旧记录缺失内容不会补造。
 
-待 readiness 和最后回归确认后固定发布提交、归档演示与未覆盖范围；不填写未经测量的准确率或成本降幅。
+## 使用边界
+
+- 仅操作登记范围，不支持任意 Shell、URL、补丁或跨服务自主扫描。
+- 依赖日志可以支持怀疑，但不能证明下游具体根因；Pod Ready 也不等于业务正常。
+- 外部写结果不确定时先核对，不承诺跨 Kubernetes 与数据库的 exactly-once。
+- 当前没有完整登录、审批角色授权或多租户隔离，适用于受控单人环境。
+- 现场修复不会自动同步配置仓库；通过连续采样不代表所有副本、集群外入口或后续持续可用。
+
+代码入口见 [代码阅读指南](docs/CODE_READING.md)；本轮交付范围见 [开发与验收记录](docs/K8s-Incident-Agent-开发与验收计划.md)。阶段文档保留历史细节，当前功能以本文和代码为准。
