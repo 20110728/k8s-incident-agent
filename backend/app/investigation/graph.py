@@ -22,6 +22,7 @@ from backend.app.agent.state import IncidentState
 from backend.app.services.round_context import INVESTIGATION_WORKFLOW
 from backend.app.investigation.diagnostics import record_validation, error_detail
 from backend.app.tools.investigation_requests import ToolBoundaryError, ToolRequest
+from backend.app.investigation.working_context import run_context_version
 
 
 class InvestigationState(IncidentState, total=False):
@@ -150,12 +151,14 @@ def build_investigation_graph(budget, toolbox, model, *, checkpointer=None, inte
         feedback = None
         failures = []
         try:
+            context_version = run_context_version(budget)
             for attempt in range(2):
                 attempt_id = request_id + (":correction" if attempt else "")
                 terminal = terminal_mode(budget, attempt_id, terminal)
                 human = {"answers": state.get("answers", []), "asked_slots": state.get("asked_slots", []),
                          "freshness_seconds": FRESHNESS_SECONDS} if interactive else None
-                prompt = build_context(current, toolbox.manifest(), state["history"], terminal_only=terminal, feedback=feedback, dialogue=human)
+                prompt = build_context(current, toolbox.manifest(), state["history"], terminal_only=terminal,
+                                       feedback=feedback, dialogue=human, context_version=context_version)
                 if production:
                     prompt["production"] = True
                     prompt["write_limit"] = "After a human wait do not propose a write plan; start a new full investigation round first."

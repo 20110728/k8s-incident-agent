@@ -101,8 +101,8 @@ def test_large_raw_body_keeps_required_and_optional_evidence(case):
     from backend.app.investigation import context
     case[1].state["evidence"][0]["data"]["large_optional_detail"] = "x" * 300000
     prompt = context.build_context(case[1].state, case[1].manifest(), [])
-    assert prompt["context_view"] == "full_raw"
-    assert "x" * 300000 in prompt["evidence"][0]["excerpt"]
+    assert prompt["context_view"] == "structured_probe_view"
+    assert prompt["evidence"][0]["data"]["large_optional_detail"] == "x" * 300000
     facts = prompt["policy_facts"]
     required = facts["resource_evidence_ids"] + facts["business_evidence_ids"] + facts["configuration_evidence_ids"]
     assert set(required) <= set(prompt["available_evidence_ids"])

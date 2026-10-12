@@ -39,7 +39,7 @@ def test_both_new_log_excerpts_survive_large_baseline_and_only_visible_ids_are_c
     assert estimate(prompt) > 0
     assert set(prompt["available_evidence_ids"]) == set(evidence)
     for n in range(2):
-        assert f"dependency-{n} connection refused" in evidence[f"ev-new-{n}"]["excerpt"]
+        assert f"dependency-{n} connection refused" in evidence[f"ev-new-{n}"]["data"]["content"]
         assert not evidence[f"ev-new-{n}"]["excerpt_truncated"]
         assert evidence[f"ev-new-{n}"]["source_truncated"]
     assert json.loads(json.dumps(prompt)) == prompt
@@ -55,7 +55,7 @@ def test_live_loop_exposes_both_results_and_records_context_without_full_logs(ca
         assert len(prompt["history"][0]["requests"]) == 2
         log_rows = [e for e in prompt["evidence"] if e["resource_type"] == "PodLogs"]
         assert len(log_rows) == 2
-        assert all("dependency connection refused" in e["excerpt"] for e in log_rows)
+        assert all("dependency connection refused" in e["data"]["content"] for e in log_rows)
         return stop(prompt)
     model = Model(choose)
     with session(case, model) as (_, _, advance):

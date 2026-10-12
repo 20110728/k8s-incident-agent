@@ -6,7 +6,26 @@ from backend.app.investigation.cards import evidence_card, clean, VERSION as CAR
 from backend.app.investigation.records import digest
 from backend.app.tools.investigation import redact_output
 
-VERSION = "investigation-context-v3.1-log-window"
+LEGACY_VERSION = "investigation-context-v3.1-log-window"
+VERSION = "investigation-context-v3.2-probe-view"
+
+
+def run_context_version(budget):
+    """Pin existing paid runs to their original representation for replay."""
+    with budget.edit() as data:
+        version = data.get("investigation_context_version")
+        if version is None:
+            versions = {c.get("metadata", {}).get("context_version") for c in data["calls"].values()
+                        if c["kind"] == "investigation_model"}
+            if len(versions) > 1:
+                raise ValueError("CONFLICTING_CONTEXT_VERSIONS")
+            version = next(iter(versions)) if versions else VERSION
+            if version not in {LEGACY_VERSION, VERSION}:
+                raise ValueError("UNSUPPORTED_CONTEXT_VERSION")
+            data["investigation_context_version"] = version
+        if version not in {LEGACY_VERSION, VERSION}:
+            raise ValueError("UNSUPPORTED_CONTEXT_VERSION")
+        return version
 
 
 def text(value):
@@ -179,3 +198,34 @@ def raw_block(item):
                  projection="saved-evidence-raw-v1", excerpt_truncated=False, input_body_clipped=False)
     block.pop("projection_omitted", None)
     return block
+
+
+def structured_block(item):
+    """Native JSON body, with a conservative log-only prompt projection."""
+    from backend.app.investigation.log_projection import project_logs, encoded_bytes
+
+    data = clean(deepcopy(item.get("data", {})))
+    if isinstance(data, dict) and "payload" in data and data.get("payload_complete"):
+        data.pop("text", None)
+    block = {k: deepcopy(item.get(k)) for k in
+             ("evidence_id", "resource_type", "resource_name", "collected_at")}
+    mapping = data if isinstance(data, dict) else {}
+    block.update(coverage=item.get("coverage") or "unspecified_legacy_snapshot",
+                 source_truncated=item.get("truncated") is True or mapping.get("truncated") is True,
+                 error=item.get("error") or mapping.get("error_code"), untrusted=True,
+                 projection="saved-evidence-object-v1", input_body_clipped=False,
+                 excerpt_truncated=False, source_digest=digest(item))
+    if isinstance(data, dict):
+        for source, target in (("container_name", "container"), ("previous", "previous")):
+            if source in data:
+                block[target] = data[source]
+        if item.get("resource_type") == "PodLogs" and isinstance(data.get("content"), str):
+            before = encoded_bytes(data)
+            view = project_logs(data["content"])
+            if view is not None:
+                data.pop("content")
+                data["log_view"] = view
+                block["projection"] = view["format"]
+            block["representation_bytes"] = {"raw_data": before, "model_data": encoded_bytes(data)}
+    block["data"] = data
+    return clean(block)

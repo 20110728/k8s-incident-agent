@@ -53,7 +53,9 @@ def call_model(model, budget, prompt, request_id, *, decision_key=None, terminal
                   "context_version": prompt.get("context_version"), "context_purpose": prompt.get("purpose"), "context_view": prompt.get("context_view"),
                   "working_state": prompt.get("working_state"),
                   "selection": [{"evidence_id": e["evidence_id"], "representation": e.get("projection"),
-                                 "excerpt_digest": digest(e.get("excerpt")),
+                                 "body_digest": digest(e["data"] if "data" in e else e.get("excerpt")),
+                                 "source_digest": e.get("source_digest"),
+                                 "representation_bytes": e.get("representation_bytes"),
                                  "reason": "required_fact" if e["evidence_id"] in set(
                                      prompt.get("policy_facts", {}).get("business_evidence_ids", []) +
                                      prompt.get("policy_facts", {}).get("resource_evidence_ids", []) +

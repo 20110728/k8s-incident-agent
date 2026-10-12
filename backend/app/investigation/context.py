@@ -5,7 +5,7 @@ from backend.app.agent.diagnosis_policy import diagnostic_facts, diagnosis_contr
 from backend.app.investigation.contracts import Decision, TOOL_GUIDE
 from backend.app.tools.investigation import redact_output
 from backend.app.investigation.working_context import (
-    VERSION, human_context, historical_context, working_state, unique_evidence, raw_block,
+    VERSION, LEGACY_VERSION, human_context, historical_context, working_state, unique_evidence, raw_block, structured_block,
 )
 
 INPUT_LIMIT = None
@@ -45,11 +45,15 @@ class ContextAssemblyError(ValueError):
                           "omitted_ids": prompt["omitted_evidence_ids"]}
 
 
-def build_context(state, manifest, history, *, terminal_only=False, feedback=None, dialogue=None, _compact=False):
+def build_context(state, manifest, history, *, terminal_only=False, feedback=None, dialogue=None, _compact=False,
+                  context_version=VERSION):
+    if context_version not in {VERSION, LEGACY_VERSION}:
+        raise ValueError("UNSUPPORTED_CONTEXT_VERSION")
     facts = diagnostic_facts(state)
     human = human_context(dialogue)
     memory = working_state(state, facts, human)
-    prompt = {"context_version": VERSION, "purpose": "diagnosis" if terminal_only else "investigate",
+    memory["version"] = context_version
+    prompt = {"context_version": context_version, "purpose": "diagnosis" if terminal_only else "investigate",
         "target": state["request"], "policy_facts": facts, "diagnosis_contract": diagnosis_contract(facts), "working_state": memory,
         "terminal_only": terminal_only, "tool_guide": {} if terminal_only else TOOL_GUIDE, "resources": [], "evidence": [],
         "runbooks": [], "available_evidence_ids": [], "available_runbook_ids": [],
@@ -63,8 +67,9 @@ def build_context(state, manifest, history, *, terminal_only=False, feedback=Non
         prompt["historical_context_unverified"] = background
     prompt = json.loads(redact_output(prompt))
     evidence = unique_evidence(state.get("evidence", []))
-    prompt["context_view"] = "full_raw"
-    prompt["evidence"] = [raw_block(item) for item in evidence]
+    legacy = context_version == LEGACY_VERSION
+    prompt["context_view"] = "full_raw" if legacy else "structured_probe_view"
+    prompt["evidence"] = [(raw_block if legacy else structured_block)(item) for item in evidence]
     prompt["available_evidence_ids"] = [item["evidence_id"] for item in evidence]
     prompt["resources"] = [] if terminal_only else manifest["resources"]
     prompt["runbooks"] = [{"runbook_id": r["runbook_id"], "excerpt": json.loads(redact_output(str(r.get("content") or "")))}
@@ -72,4 +77,9 @@ def build_context(state, manifest, history, *, terminal_only=False, feedback=Non
     prompt["available_runbook_ids"] = [r["runbook_id"] for r in prompt["runbooks"]]
     prompt["history"] = json.loads(redact_output(history))
     prompt["context_coverage"] = "All saved active evidence bodies after redaction; no input length selection. Source coverage remains limited to what was actually observed."
+    if not legacy:
+        prompt["context_coverage"] = ("All active evidence IDs retained; data contains native JSON. "
+            "Only exact repeated probe access logs may be grouped with sample counts, first/last timestamps and source line ranges. "
+            "All non-probe lines stay verbatim after redaction. Grouping is not a health inference; "
+            "counts cover saved samples only, not full history. Original evidence remains saved unchanged.")
     return prompt

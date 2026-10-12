@@ -20,8 +20,8 @@ def test_raw_fields_reach_model_without_card_field_selection(case):
     box.state["evidence"][0]["data"]["token"] = "private-value"
     prompt = build_context(box.state, box.manifest(), [])
     row = next(r for r in prompt["evidence"] if r["evidence_id"] == box.state["evidence"][0]["evidence_id"])
-    assert row["projection"] == "saved-evidence-raw-v1"
-    assert json.loads(row["excerpt"])["diagnostic_detail"] == "original server detail"
+    assert row["projection"] == "saved-evidence-object-v1"
+    assert row["data"]["diagnostic_detail"] == "original server detail"
     assert "private-value" not in json.dumps(prompt) and estimate(prompt) > 0
 
 
@@ -37,7 +37,7 @@ def test_first_request_reads_1000_lines_then_conclusion_and_replay(case):
             requests.append(request)
             return {"action": "collect", "reason": "Inspect all available logs", "missing_fact": "Earlier errors",
                     "evidence_ids": prompt["available_evidence_ids"][:1], "requests": [request]}
-        logs = [json.loads(e["excerpt"]) for e in prompt["evidence"] if e["resource_type"] == "PodLogs"]
+        logs = [e["data"] for e in prompt["evidence"] if e["resource_type"] == "PodLogs"]
         assert logs[0]["content"].count("\n") == 1000
         return conclusion(prompt, "unknown")
     model = Model(choose)

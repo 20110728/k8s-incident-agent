@@ -70,7 +70,7 @@ def test_bytes_are_decoded_before_redaction_grouping_and_next_model_call(case):
         visible = set(prompt["available_evidence_ids"])
         facts = prompt["policy_facts"]
         assert set(facts["configuration_evidence_ids"] + facts["business_evidence_ids"]) <= visible
-        logs = [json.loads(e["excerpt"]) for e in prompt["evidence"] if e["resource_type"] == "PodLogs"]
+        logs = [e["data"] for e in prompt["evidence"] if e["resource_type"] == "PodLogs"]
         assert len(logs) == 2
         assert all(log.get("content", "").count("\n") == 100 for log in logs)
         assert all(log["content"].startswith("2026-10-10T") for log in logs)
